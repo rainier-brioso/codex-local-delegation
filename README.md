@@ -74,6 +74,19 @@ Install the plugin during development, opt a repository in with the supplied
 The skill creates a handoff and calls the runner. The runner edits the current
 worktree, preserves logs outside it, and rejects out-of-scope changes.
 
+The runner has a 60-minute hard timeout and a 15-minute inactivity timeout by
+default. Any stdout or stderr from the local `codex exec` resets the inactivity
+clock. Configure repository defaults in `.codex/local-delegate.toml`:
+
+```toml
+timeout_minutes = 60
+inactivity_timeout_minutes = 15
+```
+
+Set `inactivity_timeout_minutes = 0` to disable inactivity detection while
+retaining the hard timeout. For one task, `-TimeoutMinutes` and
+`-InactivityTimeoutMinutes` override repository configuration.
+
 See [SPEC.md](SPEC.md) for the complete security and behavior contract.
 
 ## Development

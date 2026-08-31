@@ -116,8 +116,9 @@ The runner is the developer harness. It will:
   than inheriting the Desktop user's hooks, MCP servers, or provider settings;
 - invoke `codex exec` with an explicit repository working directory,
   automatic approval review (which supplies workspace-write sandboxing), network
-  disabled, ephemeral session storage, JSONL output, and a configurable
-  wall-clock timeout (60 minutes by default);
+  disabled, ephemeral session storage, JSONL output, a configurable hard
+  wall-clock timeout (60 minutes by default), and a configurable inactivity
+  timeout (15 minutes by default, with zero disabling inactivity detection);
 - set `LOCAL_DELEGATION_ACTIVE=1` for the child process;
 - pass an explicit developer prompt that requires reading the handoff,
   implementing only its scope, running the prescribed checks, and reporting
@@ -329,7 +330,8 @@ requests them.
 
 Repository-specific `AGENTS.md` files may add canonical test commands,
 architectural constraints, and protected paths. The optional TOML file may set
-the timeout, default test command, and paths that require analyst review. The
+the hard and inactivity timeouts, default test command, and paths that require
+analyst review. Explicit runner timeout flags override repository values. The
 state-owned worker profile is not replaceable by repository configuration.
 
 ## Handoff format

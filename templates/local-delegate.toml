@@ -1,5 +1,7 @@
 # Optional repository policy overrides.
 timeout_minutes = 60
+# Set to 0 to disable inactivity detection while retaining the hard timeout.
+inactivity_timeout_minutes = 15
 
 # Paths are repository-relative. The skill passes task-specific values directly
 # to the runner; these entries add permanent repository protections.

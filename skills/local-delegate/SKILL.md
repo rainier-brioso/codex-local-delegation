@@ -34,6 +34,9 @@ assume the plugin source checkout is the current working directory.
    `[a-z0-9][a-z0-9-]{0,63}`.
 3. Call `<plugin-root>/scripts/run-local-developer.ps1` with the repository, handoff path, every
    allowed path, every protected path, and the required verification commands.
+   Repository timeout settings come from `.codex/local-delegate.toml`; pass
+   `-TimeoutMinutes` or `-InactivityTimeoutMinutes` only for a task-specific
+   override. Set the inactivity value to `0` only when the user wants it disabled.
 4. Review the baseline-relative diff, `result.json`, `runner.json`, and command
    evidence. Treat model-reported checks as evidence, not proof.
 5. Report completion only when the diff remains in scope and the acceptance

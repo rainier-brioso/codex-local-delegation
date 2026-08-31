@@ -6,6 +6,7 @@ param(
     [string[]]$ProtectedPath = @(),
     [string[]]$TestCommand = @(),
     [ValidateRange(1, 1440)][int]$TimeoutMinutes = 60,
+    [ValidateRange(0, 1440)][int]$InactivityTimeoutMinutes = 15,
     [string]$StateRoot,
     [string]$CodexBin
 )
@@ -176,7 +177,8 @@ function Invoke-LdCodexDeveloper {
         [Parameter(Mandatory)][string]$EventsPath,
         [Parameter(Mandatory)][string]$StderrPath,
         [Parameter(Mandatory)][string]$Prompt,
-        [Parameter(Mandatory)][int]$TimeoutMinutes
+        [Parameter(Mandatory)][int]$TimeoutMinutes,
+        [Parameter(Mandatory)][int]$InactivityTimeoutMinutes
     )
 
     $start = [Diagnostics.ProcessStartInfo]::new()
@@ -202,20 +204,14 @@ function Invoke-LdCodexDeveloper {
     [void]$process.Start()
     $process.StandardInput.Write($Prompt)
     $process.StandardInput.Close()
-    $stdout = $process.StandardOutput.ReadToEndAsync()
-    $stderr = $process.StandardError.ReadToEndAsync()
-    $completed = $process.WaitForExit($TimeoutMinutes * 60 * 1000)
-    if (-not $completed) {
-        $process.Kill($true)
-        $process.WaitForExit()
-    }
-    $stdoutText = $stdout.GetAwaiter().GetResult()
-    $stderrText = $stderr.GetAwaiter().GetResult()
-    Write-LdUtf8File -Path $EventsPath -Content $stdoutText
-    Write-LdUtf8File -Path $StderrPath -Content $stderrText
-    $exitCode = if ($completed) { $process.ExitCode } else { -1 }
+    $result = Wait-LdProcessWithActivityTimeout `
+        -Process $process `
+        -StandardOutputPath $EventsPath `
+        -StandardErrorPath $StderrPath `
+        -HardTimeout ([TimeSpan]::FromMinutes($TimeoutMinutes)) `
+        -InactivityTimeout ([TimeSpan]::FromMinutes($InactivityTimeoutMinutes))
     $process.Dispose()
-    [pscustomobject]@{ Completed = $completed; ExitCode = $exitCode }
+    return $result
 }
 
 $lockStream = $null
@@ -260,6 +256,17 @@ try {
     $requestedRepository = [IO.Path]::GetFullPath($Repository)
     $repositoryRoot = (Invoke-LdNative -FileName 'git' -ArgumentList @('-C', $requestedRepository, 'rev-parse', '--show-toplevel')).Trim()
     $repositoryRoot = [IO.Path]::GetFullPath($repositoryRoot)
+    $repositoryTimeouts = Read-LdRepositoryTimeoutConfig -RepositoryRoot $repositoryRoot
+    $effectiveTimeoutMinutes = if ($PSBoundParameters.ContainsKey('TimeoutMinutes')) {
+        $TimeoutMinutes
+    } elseif ($null -ne $repositoryTimeouts.TimeoutMinutes) {
+        [int]$repositoryTimeouts.TimeoutMinutes
+    } else { 60 }
+    $effectiveInactivityTimeoutMinutes = if ($PSBoundParameters.ContainsKey('InactivityTimeoutMinutes')) {
+        $InactivityTimeoutMinutes
+    } elseif ($null -ne $repositoryTimeouts.InactivityTimeoutMinutes) {
+        [int]$repositoryTimeouts.InactivityTimeoutMinutes
+    } else { 15 }
     $handoffFullPath = [IO.Path]::GetFullPath($HandoffPath)
     $rootPrefix = $repositoryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $handoffFullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $handoffFullPath -PathType Leaf)) {
@@ -346,6 +353,8 @@ $handoffText
     $runnerRecord.repositoryId = $repositoryId
     $runnerRecord.taskId = $taskId
     $runnerRecord.runDirectory = $runDirectory
+    $runnerRecord.timeoutMinutes = $effectiveTimeoutMinutes
+    $runnerRecord.inactivityTimeoutMinutes = $effectiveInactivityTimeoutMinutes
     $runnerRecord.status = 'running'
     $processResult = Invoke-LdCodexDeveloper `
         -Executable $codexExecutable `
@@ -355,7 +364,8 @@ $handoffText
         -EventsPath $eventsPath `
         -StderrPath $stderrPath `
         -Prompt $prompt `
-        -TimeoutMinutes $TimeoutMinutes
+        -TimeoutMinutes $effectiveTimeoutMinutes `
+        -InactivityTimeoutMinutes $effectiveInactivityTimeoutMinutes
 
     $inventoryAfter = Get-LdWorkspaceInventory -RepositoryRoot $repositoryRoot
     $changedDuringRun = Compare-LdInventory -Before $inventoryBefore -After $inventoryAfter
@@ -378,9 +388,11 @@ $handoffText
     $runnerRecord.changedDuringRun = $changedDuringRun
     $runnerRecord.policyViolations = @($policyViolations)
     $runnerRecord.developerExitCode = $processResult.ExitCode
+    $runnerRecord.lastDeveloperActivityAt = $processResult.LastActivityAt
     if (-not $processResult.Completed) {
         $runnerRecord.status = 'timeout'
         $runnerRecord.exitCode = 31
+        $runnerRecord.timeoutReason = $processResult.TerminationReason
     } elseif ($policyViolations.Count -gt 0) {
         $runnerRecord.status = 'policy-failure'
         $runnerRecord.exitCode = 50

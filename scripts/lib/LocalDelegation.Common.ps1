@@ -210,3 +210,115 @@ function Get-LdSha256Text {
     $hash = [Security.Cryptography.SHA256]::HashData($bytes)
     return [Convert]::ToHexString($hash).ToLowerInvariant()
 }
+
+function Read-LdRepositoryTimeoutConfig {
+    param([Parameter(Mandatory)][string]$RepositoryRoot)
+
+    $settings = [ordered]@{
+        TimeoutMinutes = $null
+        InactivityTimeoutMinutes = $null
+    }
+    $path = Join-Path $RepositoryRoot '.codex/local-delegate.toml'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return [pscustomobject]$settings
+    }
+
+    $seen = @{}
+    foreach ($line in Get-Content -LiteralPath $path) {
+        if ($line -notmatch '^\s*(timeout_minutes|inactivity_timeout_minutes)\s*=') { continue }
+        if ($line -notmatch '^\s*(?<key>timeout_minutes|inactivity_timeout_minutes)\s*=\s*(?<value>\d+)\s*(?:#.*)?$') {
+            throw "Invalid timeout setting in ${path}: $line"
+        }
+        $key = $Matches.key
+        if ($seen.ContainsKey($key)) { throw "Duplicate timeout setting '$key' in $path." }
+        $seen[$key] = $true
+        $value = [int]$Matches.value
+        if ($key -eq 'timeout_minutes') {
+            if ($value -lt 1 -or $value -gt 1440) { throw 'timeout_minutes must be between 1 and 1440.' }
+            $settings.TimeoutMinutes = $value
+        } else {
+            if ($value -lt 0 -or $value -gt 1440) { throw 'inactivity_timeout_minutes must be between 0 and 1440.' }
+            $settings.InactivityTimeoutMinutes = $value
+        }
+    }
+    return [pscustomobject]$settings
+}
+
+function Wait-LdProcessWithActivityTimeout {
+    param(
+        [Parameter(Mandatory)][Diagnostics.Process]$Process,
+        [Parameter(Mandatory)][string]$StandardOutputPath,
+        [Parameter(Mandatory)][string]$StandardErrorPath,
+        [Parameter(Mandatory)][TimeSpan]$HardTimeout,
+        [Parameter(Mandatory)][TimeSpan]$InactivityTimeout,
+        [ValidateRange(10, 5000)][int]$PollMilliseconds = 100
+    )
+
+    $stdoutText = [Text.StringBuilder]::new()
+    $stderrText = [Text.StringBuilder]::new()
+    $stdoutBuffer = [char[]]::new(4096)
+    $stderrBuffer = [char[]]::new(4096)
+    $stdoutRead = $Process.StandardOutput.ReadAsync($stdoutBuffer, 0, $stdoutBuffer.Length)
+    $stderrRead = $Process.StandardError.ReadAsync($stderrBuffer, 0, $stderrBuffer.Length)
+    $stdoutClosed = $false
+    $stderrClosed = $false
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $lastActivityElapsed = [TimeSpan]::Zero
+    $lastActivityAt = [DateTimeOffset]::UtcNow
+    $terminationReason = $null
+
+    while ($true) {
+        $activity = $false
+        if (-not $stdoutClosed -and $stdoutRead.IsCompleted) {
+            $count = $stdoutRead.GetAwaiter().GetResult()
+            if ($count -eq 0) {
+                $stdoutClosed = $true
+            } else {
+                [void]$stdoutText.Append($stdoutBuffer, 0, $count)
+                $activity = $true
+                $stdoutRead = $Process.StandardOutput.ReadAsync($stdoutBuffer, 0, $stdoutBuffer.Length)
+            }
+        }
+        if (-not $stderrClosed -and $stderrRead.IsCompleted) {
+            $count = $stderrRead.GetAwaiter().GetResult()
+            if ($count -eq 0) {
+                $stderrClosed = $true
+            } else {
+                [void]$stderrText.Append($stderrBuffer, 0, $count)
+                $activity = $true
+                $stderrRead = $Process.StandardError.ReadAsync($stderrBuffer, 0, $stderrBuffer.Length)
+            }
+        }
+        if ($activity) {
+            $lastActivityElapsed = $clock.Elapsed
+            $lastActivityAt = [DateTimeOffset]::UtcNow
+        }
+
+        $exited = $Process.HasExited
+        if ($exited -and $stdoutClosed -and $stderrClosed) { break }
+        if (-not $exited -and $null -eq $terminationReason) {
+            if ($clock.Elapsed -ge $HardTimeout) {
+                $terminationReason = 'hard-timeout'
+            } elseif ($InactivityTimeout -gt [TimeSpan]::Zero -and ($clock.Elapsed - $lastActivityElapsed) -ge $InactivityTimeout) {
+                $terminationReason = 'inactivity-timeout'
+            }
+            if ($null -ne $terminationReason) {
+                try { $Process.Kill($true) } catch [InvalidOperationException] { }
+            }
+        }
+        Start-Sleep -Milliseconds $PollMilliseconds
+    }
+
+    $Process.WaitForExit()
+    $clock.Stop()
+    Write-LdUtf8File -Path $StandardOutputPath -Content $stdoutText.ToString()
+    Write-LdUtf8File -Path $StandardErrorPath -Content $stderrText.ToString()
+    $exitCode = if ($null -eq $terminationReason) { $Process.ExitCode } else { -1 }
+    [pscustomobject]@{
+        Completed = ($null -eq $terminationReason)
+        ExitCode = $exitCode
+        TerminationReason = $terminationReason
+        LastActivityAt = $lastActivityAt.ToString('o')
+        ElapsedMilliseconds = $clock.ElapsedMilliseconds
+    }
+}

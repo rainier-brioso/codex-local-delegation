@@ -35,6 +35,23 @@ function Test-Throws {
     }
 }
 
+function Start-LdTestProcess {
+    param([Parameter(Mandatory)][string]$Command)
+
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = (Get-Command pwsh).Source
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    foreach ($argument in @('-NoLogo', '-NoProfile', '-Command', $Command)) {
+        [void]$start.ArgumentList.Add($argument)
+    }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $start
+    [void]$process.Start()
+    return $process
+}
+
 foreach ($scriptFile in Get-ChildItem -Path (Join-Path $projectRoot 'scripts') -Filter '*.ps1' -Recurse) {
     $tokens = $null
     $parseErrors = $null
@@ -91,6 +108,54 @@ $integrationRoot = Join-Path $projectRoot ('.test-tmp/' + [Guid]::NewGuid().ToSt
 $mockProcess = $null
 try {
     [void](New-Item -ItemType Directory -Force -Path $integrationRoot)
+    $configRepository = Join-Path $integrationRoot 'config-repository'
+    [void](New-Item -ItemType Directory -Force -Path (Join-Path $configRepository '.codex'))
+    Write-LdUtf8File -Path (Join-Path $configRepository '.codex/local-delegate.toml') -Content @"
+timeout_minutes = 90
+inactivity_timeout_minutes = 12
+"@
+    $timeoutSettings = Read-LdRepositoryTimeoutConfig -RepositoryRoot $configRepository
+    Test-Condition -Condition ($timeoutSettings.TimeoutMinutes -eq 90) -Message 'Repository config supplies the hard timeout'
+    Test-Condition -Condition ($timeoutSettings.InactivityTimeoutMinutes -eq 12) -Message 'Repository config supplies the inactivity timeout'
+    Write-LdUtf8File -Path (Join-Path $configRepository '.codex/local-delegate.toml') -Content "inactivity_timeout_minutes = 1441`n"
+    Test-Throws -Action { Read-LdRepositoryTimeoutConfig -RepositoryRoot $configRepository } -Message 'Repository config rejects an excessive inactivity timeout'
+
+    $idleProcess = Start-LdTestProcess -Command 'Start-Sleep -Seconds 2'
+    try {
+        $idleResult = Wait-LdProcessWithActivityTimeout `
+            -Process $idleProcess `
+            -StandardOutputPath (Join-Path $integrationRoot 'idle-events.jsonl') `
+            -StandardErrorPath (Join-Path $integrationRoot 'idle-stderr.log') `
+            -HardTimeout ([TimeSpan]::FromSeconds(5)) `
+            -InactivityTimeout ([TimeSpan]::FromMilliseconds(300)) `
+            -PollMilliseconds 25
+        Test-Condition -Condition (-not $idleResult.Completed -and $idleResult.TerminationReason -eq 'inactivity-timeout') -Message 'Silent developer process reaches the inactivity timeout'
+    } finally { $idleProcess.Dispose() }
+
+    $activeProcess = Start-LdTestProcess -Command '1..4 | ForEach-Object { Write-Output $_; Start-Sleep -Milliseconds 150 }'
+    try {
+        $activeResult = Wait-LdProcessWithActivityTimeout `
+            -Process $activeProcess `
+            -StandardOutputPath (Join-Path $integrationRoot 'active-events.jsonl') `
+            -StandardErrorPath (Join-Path $integrationRoot 'active-stderr.log') `
+            -HardTimeout ([TimeSpan]::FromSeconds(5)) `
+            -InactivityTimeout ([TimeSpan]::FromMilliseconds(300)) `
+            -PollMilliseconds 25
+        Test-Condition -Condition ($activeResult.Completed -and $activeResult.ExitCode -eq 0) -Message 'Periodic developer output keeps the process active'
+    } finally { $activeProcess.Dispose() }
+
+    $disabledProcess = Start-LdTestProcess -Command 'Start-Sleep -Milliseconds 400'
+    try {
+        $disabledResult = Wait-LdProcessWithActivityTimeout `
+            -Process $disabledProcess `
+            -StandardOutputPath (Join-Path $integrationRoot 'disabled-events.jsonl') `
+            -StandardErrorPath (Join-Path $integrationRoot 'disabled-stderr.log') `
+            -HardTimeout ([TimeSpan]::FromSeconds(2)) `
+            -InactivityTimeout ([TimeSpan]::Zero) `
+            -PollMilliseconds 25
+        Test-Condition -Condition ($disabledResult.Completed -and $disabledResult.ExitCode -eq 0) -Message 'Zero disables the inactivity timeout'
+    } finally { $disabledProcess.Dispose() }
+
     $portPicker = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $portPicker.Start()
     $port = ([Net.IPEndPoint]$portPicker.LocalEndpoint).Port
@@ -114,6 +179,7 @@ try {
     $runnerText = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'scripts/run-local-developer.ps1')
     Test-Condition -Condition ($runnerText -match "'--approve-for-me'") -Message 'Runner uses automatic workspace-write approval review'
     Test-Condition -Condition ($runnerText -notmatch "'--sandbox', 'workspace-write'") -Message 'Runner avoids the conflicting explicit sandbox flag'
+    Test-Condition -Condition ($runnerText -match '\[int\]\$InactivityTimeoutMinutes = 15') -Message 'Runner exposes the inactivity timeout flag'
     $catalog = Get-Content -Raw -LiteralPath (Join-Path $integrationRoot 'codex-home/model-catalog.json') | ConvertFrom-Json -Depth 32
     Test-Condition -Condition ($catalog.models[0].shell_type -eq 'shell_command') -Message 'Model catalog selects function-based shell tools'
     Test-Condition -Condition ($catalog.models[0].slug -eq 'local-test-model') -Message 'Model catalog records the selected local model'
