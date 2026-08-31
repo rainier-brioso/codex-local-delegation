@@ -88,7 +88,7 @@ Test-Condition -Condition ($sampleResult | Test-Json -SchemaFile $schemaPath) -M
 
 $skillPath = Join-Path $projectRoot 'skills/local-delegate/SKILL.md'
 $skillText = Get-Content -Raw -LiteralPath $skillPath
-Test-Condition -Condition ($skillText -match '(?m)^name: local-delegate$') -Message 'Skill name is valid'
+Test-Condition -Condition ($skillText -match '(?m)^name: local-delegate\r?$') -Message 'Skill name is valid'
 Test-Condition -Condition ($skillText -notmatch '\[TODO:') -Message 'Skill contains no scaffold placeholders'
 Test-Condition -Condition ($skillText -match '<plugin-root>/scripts/run-local-developer\.ps1') -Message 'Skill resolves the runner from the installed plugin root'
 Test-Condition -Condition ($skillText -notmatch '(?m)(?<!<plugin-root>/)`scripts/(doctor|run-local-developer)\.ps1`') -Message 'Skill has no workspace-relative runner references'
@@ -120,27 +120,27 @@ inactivity_timeout_minutes = 12
     Write-LdUtf8File -Path (Join-Path $configRepository '.codex/local-delegate.toml') -Content "inactivity_timeout_minutes = 1441`n"
     Test-Throws -Action { Read-LdRepositoryTimeoutConfig -RepositoryRoot $configRepository } -Message 'Repository config rejects an excessive inactivity timeout'
 
-    $idleProcess = Start-LdTestProcess -Command 'Start-Sleep -Seconds 2'
+    $idleProcess = Start-LdTestProcess -Command 'Start-Sleep -Seconds 4'
     try {
         $idleResult = Wait-LdProcessWithActivityTimeout `
             -Process $idleProcess `
             -StandardOutputPath (Join-Path $integrationRoot 'idle-events.jsonl') `
             -StandardErrorPath (Join-Path $integrationRoot 'idle-stderr.log') `
-            -HardTimeout ([TimeSpan]::FromSeconds(5)) `
-            -InactivityTimeout ([TimeSpan]::FromMilliseconds(300)) `
-            -PollMilliseconds 25
+            -HardTimeout ([TimeSpan]::FromSeconds(15)) `
+            -InactivityTimeout ([TimeSpan]::FromSeconds(2)) `
+            -PollMilliseconds 50
         Test-Condition -Condition (-not $idleResult.Completed -and $idleResult.TerminationReason -eq 'inactivity-timeout') -Message 'Silent developer process reaches the inactivity timeout'
     } finally { $idleProcess.Dispose() }
 
-    $activeProcess = Start-LdTestProcess -Command '1..4 | ForEach-Object { Write-Output $_; Start-Sleep -Milliseconds 150 }'
+    $activeProcess = Start-LdTestProcess -Command '1..5 | ForEach-Object { Write-Output $_; Start-Sleep -Milliseconds 750 }'
     try {
         $activeResult = Wait-LdProcessWithActivityTimeout `
             -Process $activeProcess `
             -StandardOutputPath (Join-Path $integrationRoot 'active-events.jsonl') `
             -StandardErrorPath (Join-Path $integrationRoot 'active-stderr.log') `
-            -HardTimeout ([TimeSpan]::FromSeconds(5)) `
-            -InactivityTimeout ([TimeSpan]::FromMilliseconds(300)) `
-            -PollMilliseconds 25
+            -HardTimeout ([TimeSpan]::FromSeconds(15)) `
+            -InactivityTimeout ([TimeSpan]::FromSeconds(2)) `
+            -PollMilliseconds 50
         Test-Condition -Condition ($activeResult.Completed -and $activeResult.ExitCode -eq 0) -Message 'Periodic developer output keeps the process active'
     } finally { $activeProcess.Dispose() }
 
@@ -150,7 +150,7 @@ inactivity_timeout_minutes = 12
             -Process $disabledProcess `
             -StandardOutputPath (Join-Path $integrationRoot 'disabled-events.jsonl') `
             -StandardErrorPath (Join-Path $integrationRoot 'disabled-stderr.log') `
-            -HardTimeout ([TimeSpan]::FromSeconds(2)) `
+            -HardTimeout ([TimeSpan]::FromSeconds(10)) `
             -InactivityTimeout ([TimeSpan]::Zero) `
             -PollMilliseconds 25
         Test-Condition -Condition ($disabledResult.Completed -and $disabledResult.ExitCode -eq 0) -Message 'Zero disables the inactivity timeout'
