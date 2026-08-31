@@ -88,7 +88,7 @@ Test-Condition -Condition ($sampleResult | Test-Json -SchemaFile $schemaPath) -M
 
 $skillPath = Join-Path $projectRoot 'skills/local-delegate/SKILL.md'
 $skillText = Get-Content -Raw -LiteralPath $skillPath
-Test-Condition -Condition ($skillText -match '(?m)^name: local-delegate$') -Message 'Skill name is valid'
+Test-Condition -Condition ($skillText -match '(?m)^name: local-delegate\r?$') -Message 'Skill name is valid'
 Test-Condition -Condition ($skillText -notmatch '\[TODO:') -Message 'Skill contains no scaffold placeholders'
 Test-Condition -Condition ($skillText -match '<plugin-root>/scripts/run-local-developer\.ps1') -Message 'Skill resolves the runner from the installed plugin root'
 Test-Condition -Condition ($skillText -notmatch '(?m)(?<!<plugin-root>/)`scripts/(doctor|run-local-developer)\.ps1`') -Message 'Skill has no workspace-relative runner references'
@@ -120,27 +120,27 @@ inactivity_timeout_minutes = 12
     Write-LdUtf8File -Path (Join-Path $configRepository '.codex/local-delegate.toml') -Content "inactivity_timeout_minutes = 1441`n"
     Test-Throws -Action { Read-LdRepositoryTimeoutConfig -RepositoryRoot $configRepository } -Message 'Repository config rejects an excessive inactivity timeout'
 
-    $idleProcess = Start-LdTestProcess -Command 'Start-Sleep -Seconds 2'
+    $idleProcess = Start-LdTestProcess -Command 'Start-Sleep -Seconds 4'
     try {
         $idleResult = Wait-LdProcessWithActivityTimeout `
             -Process $idleProcess `
             -StandardOutputPath (Join-Path $integrationRoot 'idle-events.jsonl') `
             -StandardErrorPath (Join-Path $integrationRoot 'idle-stderr.log') `
-            -HardTimeout ([TimeSpan]::FromSeconds(5)) `
-            -InactivityTimeout ([TimeSpan]::FromMilliseconds(300)) `
-            -PollMilliseconds 25
+            -HardTimeout ([TimeSpan]::FromSeconds(15)) `
+            -InactivityTimeout ([TimeSpan]::FromSeconds(2)) `
+            -PollMilliseconds 50
         Test-Condition -Condition (-not $idleResult.Completed -and $idleResult.TerminationReason -eq 'inactivity-timeout') -Message 'Silent developer process reaches the inactivity timeout'
     } finally { $idleProcess.Dispose() }
 
-    $activeProcess = Start-LdTestProcess -Command '1..4 | ForEach-Object { Write-Output $_; Start-Sleep -Milliseconds 150 }'
+    $activeProcess = Start-LdTestProcess -Command '1..5 | ForEach-Object { Write-Output $_; Start-Sleep -Milliseconds 750 }'
     try {
         $activeResult = Wait-LdProcessWithActivityTimeout `
             -Process $activeProcess `
             -StandardOutputPath (Join-Path $integrationRoot 'active-events.jsonl') `
             -StandardErrorPath (Join-Path $integrationRoot 'active-stderr.log') `
-            -HardTimeout ([TimeSpan]::FromSeconds(5)) `
-            -InactivityTimeout ([TimeSpan]::FromMilliseconds(300)) `
-            -PollMilliseconds 25
+            -HardTimeout ([TimeSpan]::FromSeconds(15)) `
+            -InactivityTimeout ([TimeSpan]::FromSeconds(2)) `
+            -PollMilliseconds 50
         Test-Condition -Condition ($activeResult.Completed -and $activeResult.ExitCode -eq 0) -Message 'Periodic developer output keeps the process active'
     } finally { $activeProcess.Dispose() }
 
@@ -150,7 +150,7 @@ inactivity_timeout_minutes = 12
             -Process $disabledProcess `
             -StandardOutputPath (Join-Path $integrationRoot 'disabled-events.jsonl') `
             -StandardErrorPath (Join-Path $integrationRoot 'disabled-stderr.log') `
-            -HardTimeout ([TimeSpan]::FromSeconds(2)) `
+            -HardTimeout ([TimeSpan]::FromSeconds(10)) `
             -InactivityTimeout ([TimeSpan]::Zero) `
             -PollMilliseconds 25
         Test-Condition -Condition ($disabledResult.Completed -and $disabledResult.ExitCode -eq 0) -Message 'Zero disables the inactivity timeout'
@@ -184,12 +184,31 @@ inactivity_timeout_minutes = 12
     Test-Condition -Condition ($catalog.models[0].shell_type -eq 'shell_command') -Message 'Model catalog selects function-based shell tools'
     Test-Condition -Condition ($catalog.models[0].slug -eq 'local-test-model') -Message 'Model catalog records the selected local model'
     Test-Condition -Condition ($catalog.models[0].context_window -eq 32768) -Message 'Model catalog uses the conservative default context window'
-    $doctorOutput = & pwsh -NoLogo -NoProfile -File (Join-Path $projectRoot 'scripts/doctor.ps1') `
-        -StateRoot $integrationRoot -TimeoutSeconds 20 2>&1
-    if ($LASTEXITCODE -ne 0) { $doctorOutput | ForEach-Object { Write-Host "DOCTOR $_" } }
-    Test-Condition -Condition ($LASTEXITCODE -eq 0) -Message 'Doctor completes Responses and tool-call probes'
+
+    $mockBin = Join-Path $integrationRoot 'mock-bin'
+    [void](New-Item -ItemType Directory -Force -Path $mockBin)
+    $mockCodexPath = Join-Path $mockBin 'codex.cmd'
+    Write-LdUtf8File -Path $mockCodexPath -Content @'
+@echo off
+echo --profile --strict-config --sandbox --ephemeral --json --output-last-message --cd
+'@
+    $previousPath = $env:PATH
+    try {
+        $env:PATH = "$mockBin$([IO.Path]::PathSeparator)$previousPath"
+        $resolvedCodex = Get-Command codex -ErrorAction Stop
+        Test-Condition -Condition ($resolvedCodex.Source -eq $mockCodexPath) -Message 'Doctor test uses the isolated Codex CLI fixture'
+        $doctorOutput = & pwsh -NoLogo -NoProfile -File (Join-Path $projectRoot 'scripts/doctor.ps1') `
+            -StateRoot $integrationRoot -TimeoutSeconds 20 2>&1
+        $doctorExitCode = $LASTEXITCODE
+    } finally {
+        $env:PATH = $previousPath
+    }
+    if ($doctorExitCode -ne 0) { $doctorOutput | ForEach-Object { Write-Host "DOCTOR $_" } }
+    Test-Condition -Condition ($doctorExitCode -eq 0) -Message 'Doctor completes Responses and tool-call probes'
     $integrationConfig = Get-Content -Raw -LiteralPath (Join-Path $integrationRoot 'config/provider.json') | ConvertFrom-Json -Depth 32
-    Test-Condition -Condition ($integrationConfig.lastDoctor.status -eq 'passed') -Message 'Doctor records a successful compatibility result'
+    $doctorRecordedSuccess = $integrationConfig.PSObject.Properties.Name -contains 'lastDoctor'
+    if ($doctorRecordedSuccess) { $doctorRecordedSuccess = $integrationConfig.lastDoctor.status -eq 'passed' }
+    Test-Condition -Condition $doctorRecordedSuccess -Message 'Doctor records a successful compatibility result'
 } finally {
     if ($null -ne $mockProcess -and -not $mockProcess.HasExited) {
         $mockProcess.Kill($true)
