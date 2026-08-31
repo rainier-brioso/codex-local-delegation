@@ -1,0 +1,34 @@
+{
+  "name": "codex-local-delegation",
+  "version": "0.1.0",
+  "description": "Delegate bounded implementation tasks from Codex to an existing local model provider.",
+  "author": {
+    "name": "Rainier Brioso",
+    "url": "https://github.com/rainier-brioso"
+  },
+  "homepage": "https://github.com/rainier-brioso/codex-local-delegation#readme",
+  "repository": "https://github.com/rainier-brioso/codex-local-delegation",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "local-inference",
+    "local-model",
+    "delegation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Local Delegation",
+    "shortDescription": "Delegate bounded coding tasks to a local model.",
+    "longDescription": "Keeps Codex as analyst and reviewer while a user-managed local model provider performs a constrained implementation task.",
+    "developerName": "Rainier Brioso",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/rainier-brioso/codex-local-delegation",
+    "defaultPrompt": [
+      "Delegate this bounded implementation to my local model."
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+.codex/local-handoffs/
+.test-tmp/
+*.tmp
+*.log

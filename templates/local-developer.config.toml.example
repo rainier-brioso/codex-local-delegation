@@ -1,0 +1,21 @@
+model_provider = "local-developer"
+model = "<selected-model-id>"
+model_catalog_json = "<state-root>\\codex-home\\model-catalog.json"
+model_reasoning_summary = "none"
+web_search = "disabled"
+
+[features]
+apps = false
+remote_plugin = false
+multi_agent = false
+plugins = false
+skill_search = false
+
+[model_providers.local-developer]
+name = "Local model provider"
+base_url = "http://127.0.0.1:11434/v1"
+wire_api = "responses"
+requires_openai_auth = false
+
+[sandbox_workspace_write]
+network_access = false

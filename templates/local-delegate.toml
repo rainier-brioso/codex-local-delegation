@@ -1,0 +1,9 @@
+# Optional repository policy overrides.
+timeout_minutes = 60
+
+# Paths are repository-relative. The skill passes task-specific values directly
+# to the runner; these entries add permanent repository protections.
+protected_paths = [
+  ".git/",
+  ".codex/local-handoffs/"
+]
