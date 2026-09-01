@@ -29,7 +29,7 @@ It must not change the model used by the Desktop analyst session.
 
 1. The user opens a repository in Codex Desktop and requests work.
 2. Codex Desktop analyses the task and writes a bounded handoff file.
-3. The `$local-delegate` skill invokes the bundled PowerShell runner.
+3. The `$local-delegate` skill invokes the bundled Python runner.
 4. The runner starts `codex exec` with the `local-developer` profile in the target
    repository.
 5. The local model developer changes only files within the stated scope, runs
@@ -40,7 +40,7 @@ It must not change the model used by the Desktop analyst session.
 ```text
 Codex Desktop (analyst / reviewer)
   -> $local-delegate skill
-    -> run-local-developer.ps1
+    -> run_local_developer.py
       -> codex exec --profile local-developer
         -> existing local Responses endpoint
           -> Ollama, llama.cpp, or compatible service
@@ -69,11 +69,12 @@ codex-local-delegation/
     local-delegate/
       SKILL.md
   scripts/
-    configure-provider.ps1
-    run-local-developer.ps1
-    doctor.ps1
-    lib/
-      LocalDelegation.Common.ps1
+    configure_provider.py
+    run_local_developer.py
+    doctor.py
+    local_delegation/
+      __init__.py
+      common.py
   templates/
     workspace-AGENTS.md
     local-delegate.toml
@@ -81,8 +82,9 @@ codex-local-delegation/
   schemas/
     developer-result.schema.json
   tests/
-    mock-provider.ps1
-    run-tests.ps1
+    __init__.py
+    mock_provider.py
+    test_local_delegation.py
   SPEC.md
   README.md
   CONTRIBUTING.md
@@ -99,12 +101,12 @@ It will:
 2. Create `.codex/local-handoffs/<task-id>/request.md` in the target repository.
 3. Record the repository baseline and whether pre-existing changes overlap the
    allowed scope. Overlap requires explicit analyst/user approval before the run.
-4. Call `run-local-developer.ps1` with the repository and handoff path.
+4. Call `python run_local_developer.py` with the repository and handoff path.
 5. Review the baseline-relative diff, structured result, and test evidence.
 6. Escalate unclear, unsafe, out-of-scope, or failing work rather
    than silently widening the task.
 
-### `run-local-developer.ps1`
+### `run_local_developer.py`
 
 The runner is the developer harness. It will:
 
@@ -115,7 +117,7 @@ The runner is the developer harness. It will:
 - use the state-owned, isolated `local-developer` profile and `CODEX_HOME` rather
   than inheriting the Desktop user's hooks, MCP servers, or provider settings;
 - invoke `codex exec` with an explicit repository working directory,
-  automatic approval review (which supplies workspace-write sandboxing), network
+  an explicit workspace-write sandbox, approval prompts disabled, network
   disabled, ephemeral session storage, JSONL output, a configurable hard
   wall-clock timeout (60 minutes by default), and a configurable inactivity
   timeout (15 minutes by default, with zero disabling inactivity detection);
@@ -124,7 +126,8 @@ The runner is the developer harness. It will:
   implementing only its scope, running the prescribed checks, and reporting
   the changed files and results;
 - preserve the authoritative baseline and all Codex CLI output in the
-  state-owned run directory, then mirror review copies into the handoff directory;
+  state-owned run directory, print the live event and stderr log paths when the
+  run starts, then mirror review copies into the handoff directory;
 - compare every resulting changed path with the handoff allowlist and protected
   paths, including untracked files, renames, submodules, symlinks, and junctions;
 - verify that `HEAD` and Git refs were not changed;
@@ -175,7 +178,7 @@ Exit codes are stable: `0` success, `10` invalid input/configuration, `20`
 endpoint/profile failure, `30` developer process failure, `31` timeout, `40`
 verification failure, and `50` scope or Git-policy violation.
 
-### `doctor.ps1`
+### `doctor.py`
 
 The diagnostics script does not modify an opted-in repository. It validates:
 
@@ -199,7 +202,7 @@ inference runtime, model format, launcher, or adapter implementation.
 
 ### Discovery and explicit configuration
 
-`configure-provider.ps1` records an already-running local provider. It accepts
+`configure_provider.py` records an already-running local provider. It accepts
 an explicit provider, base URL, and model identifier. Explicit configuration
 always takes precedence and is never replaced by discovery.
 
@@ -224,7 +227,7 @@ actionable message showing the supported defaults and the explicit endpoint
 option.
 
 Provider discovery does not establish Codex compatibility. Before delegation,
-`doctor.ps1` must complete a streamed `/v1/responses` request and a harmless,
+`doctor.py` must complete a streamed `/v1/responses` request and a harmless,
 stateless tool-call/tool-output round trip using the selected model. The second
 request repeats the function call alongside its output instead of relying on
 `previous_response_id`, which is not required by Codex's HTTP Responses flow.
@@ -251,7 +254,7 @@ are stored outside the repository. The state root is read from
   run\
 ```
 
-`configure-provider.ps1` writes only `provider.json` and the isolated Codex
+`configure_provider.py` writes only `provider.json` and the isolated Codex
 configuration beneath this state root. `provider.json` records the provider
 kind, canonical base URL, model identifier, whether the choice was explicit or
 discovered, and the last successful doctor result. It contains no runtime path,
@@ -380,15 +383,15 @@ The project is a personal Codex plugin:
    Codex CLI sessions on this machine.
 3. Add the small opt-in `AGENTS.md` and optional TOML file to repositories that
    should use delegation.
-4. Run `doctor.ps1` after configuration and after provider, model, or Codex CLI
+4. Run `doctor.py` after configuration and after provider, model, or Codex CLI
    upgrades.
 
 The first-time configuration sequence is:
 
-```powershell
+```bash
 cd <path-to-codex-local-delegation>
-.\scripts\configure-provider.ps1
-.\scripts\doctor.ps1
+python scripts/configure_provider.py
+python scripts/doctor.py
 ```
 
 This writes only tool configuration beneath `LOCAL_DELEGATE_HOME`. It does not
@@ -408,14 +411,14 @@ repositories.
 
 ### M2 — Synchronous delegation
 
-- Implement the skill and PowerShell runner.
+- Implement the skill and Python runner.
 - Implement handoff creation and output capture.
 - Add baseline capture, recursion prevention, scope validation, locking,
   timeout handling, stable exit codes, and tests for each failure mode.
 
 ### M3 — Local-stack diagnostics
 
-- Implement `doctor.ps1`.
+- Implement `doctor.py`.
 - Add provider discovery, the state-owned isolated `local-developer` profile, and the
   Responses/tool-calling capability contract.
 - Test an end-to-end change in a disposable repository.
