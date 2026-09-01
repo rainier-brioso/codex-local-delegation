@@ -2,3 +2,5 @@
 .test-tmp/
 *.tmp
 *.log
+__pycache__/
+*.py[cod]

@@ -21,8 +21,11 @@ assume the plugin source checkout is the current working directory.
   verification commands.
 - Stop if the task needs network access, dependency installation, commits,
   pushes, migrations, destructive Git actions, or another external side effect.
-- Run `<plugin-root>/scripts/doctor.ps1` if provider compatibility has not been verified since
-  the provider, selected model, or Codex CLI changed.
+- Require an existing provider configuration. Use
+  `python <plugin-root>/scripts/configure_provider.py` only for first-time setup or
+  an intentional provider/model change. Run
+  `python <plugin-root>/scripts/doctor.py` if compatibility has not been verified
+  since the provider, selected model, or Codex CLI changed.
 
 ## Workflow
 
@@ -32,10 +35,10 @@ assume the plugin source checkout is the current working directory.
 2. Create `.codex/local-handoffs/<task-id>/request.md` from
    `<plugin-root>/templates/handoff-request.md`. Use a lowercase task identifier matching
    `[a-z0-9][a-z0-9-]{0,63}`.
-3. Call `<plugin-root>/scripts/run-local-developer.ps1` with the repository, handoff path, every
+3. Call `python <plugin-root>/scripts/run_local_developer.py` with the repository, handoff path, every
    allowed path, every protected path, and the required verification commands.
    Repository timeout settings come from `.codex/local-delegate.toml`; pass
-   `-TimeoutMinutes` or `-InactivityTimeoutMinutes` only for a task-specific
+   `--timeout-minutes` or `--inactivity-timeout-minutes` only for a task-specific
    override. Set the inactivity value to `0` only when the user wants it disabled.
 4. Review the baseline-relative diff, `result.json`, `runner.json`, and command
    evidence. Treat model-reported checks as evidence, not proof.

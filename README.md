@@ -13,7 +13,7 @@ as llama.cpp do not need to accept Codex-specific custom tools.
 
 ## Requirements
 
-- Windows with PowerShell 7 or later.
+- Python 3.11 or later.
 - Git and Codex CLI on `PATH`.
 - An already-running model exposed through a compatible local endpoint.
 - One of:
@@ -25,7 +25,7 @@ as llama.cpp do not need to accept Codex-specific custom tools.
 
 Add this repository as a Codex marketplace and install the plugin:
 
-```powershell
+```bash
 codex plugin marketplace add rainier-brioso/codex-local-delegation
 codex plugin add codex-local-delegation@rainier-local-tools
 ```
@@ -38,21 +38,21 @@ download either one.
 
 Automatic discovery checks only the two conventional endpoints:
 
-```powershell
-./scripts/configure-provider.ps1
+```bash
+python scripts/configure_provider.py
 ```
 
 Explicit configuration always wins:
 
-```powershell
-./scripts/configure-provider.ps1 `
-  -Provider LlamaCpp `
-  -BaseUrl http://127.0.0.1:8080 `
-  -Model my-local-model `
-  -ContextWindow 128000
+```bash
+python scripts/configure_provider.py \
+  --provider LlamaCpp \
+  --base-url http://127.0.0.1:8080 \
+  --model my-local-model \
+  --context-window 128000
 ```
 
-`-ContextWindow` describes the selected model to Codex; it does not configure
+`--context-window` describes the selected model to Codex; it does not configure
 the inference server. It defaults conservatively to 32768 tokens.
 
 Configuration writes only beneath `LOCAL_DELEGATE_HOME`, which defaults to
@@ -60,8 +60,8 @@ Configuration writes only beneath `LOCAL_DELEGATE_HOME`, which defaults to
 
 ## Verify compatibility
 
-```powershell
-./scripts/doctor.ps1
+```bash
+python scripts/doctor.py
 ```
 
 The doctor checks the Codex CLI, provider identity, model availability,
@@ -84,8 +84,8 @@ inactivity_timeout_minutes = 15
 ```
 
 Set `inactivity_timeout_minutes = 0` to disable inactivity detection while
-retaining the hard timeout. For one task, `-TimeoutMinutes` and
-`-InactivityTimeoutMinutes` override repository configuration.
+retaining the hard timeout. For one task, `--timeout-minutes` and
+`--inactivity-timeout-minutes` override repository configuration.
 
 See [SPEC.md](SPEC.md) for the complete security and behavior contract.
 
@@ -93,8 +93,8 @@ See [SPEC.md](SPEC.md) for the complete security and behavior contract.
 
 Run the self-contained checks:
 
-```powershell
-./tests/run-tests.ps1
+```bash
+python -m unittest discover -s tests -v
 ```
 
 This project is licensed under the MIT License. It does not redistribute or
