@@ -19,6 +19,8 @@ assume the plugin source checkout is the current working directory.
 - Do not invoke this workflow when `LOCAL_DELEGATION_ACTIVE=1`.
 - Require a bounded outcome, explicit acceptance criteria, allowed paths, and
   verification commands.
+- Split broad or independent work into separate handoffs. One run should cover
+  one coherent task and only the small set of files needed to complete it.
 - Stop if the task needs network access, dependency installation, commits,
   pushes, migrations, destructive Git actions, or another external side effect.
 - Require an existing provider configuration. Use

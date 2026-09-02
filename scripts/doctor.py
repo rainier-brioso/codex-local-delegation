@@ -18,6 +18,8 @@ from local_delegation.common import (
     http_get,
     http_post,
     convert_from_ld_json_response,
+    inspect_ld_codex_cli,
+    CODEX_COMPATIBILITY_CONTRACT_VERSION,
 )
 
 
@@ -180,24 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 20
 
-        # Check codex CLI has required flags
-        import subprocess
-        result = subprocess.run(
-            [codex_path, "exec", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        help_text = result.stdout + result.stderr
-        for flag in ["--profile", "--strict-config", "--sandbox", "--ask-for-approval", "--ephemeral",
-                     "--json", "--output-last-message", "--cd"]:
-            if flag not in help_text:
-                print(
-                    f"Error: Codex CLI does not expose required option {flag}. "
-                    f"Upgrade Codex CLI.",
-                    file=sys.stderr,
-                )
-                return 20
+        codex_info = inspect_ld_codex_cli(codex_path)
 
         # Probe streaming Responses
         responses_url = configuration["responsesBaseUrl"].rstrip("/") + "/responses"
@@ -212,7 +197,10 @@ def main(argv: list[str] | None = None) -> int:
         configuration["lastDoctor"] = {
             "status": "passed",
             "checkedAt": datetime.now(timezone.utc).isoformat(),
-            "codexPath": codex_path,
+            "codexPath": codex_info["path"],
+            "codexVersion": codex_info["version"],
+            "approvalMode": codex_info["approval_mode"],
+            "compatibilityContractVersion": CODEX_COMPATIBILITY_CONTRACT_VERSION,
             "providerIdentity": probe["identity"],
         }
         config_path = get_ld_provider_config_path(resolved_state_root)

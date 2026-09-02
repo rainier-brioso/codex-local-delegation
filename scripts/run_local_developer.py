@@ -28,6 +28,8 @@ from local_delegation.common import (
     _kill_process_tree,
     acquire_ld_file_lock,
     release_ld_file_lock,
+    inspect_ld_codex_cli,
+    CODEX_COMPATIBILITY_CONTRACT_VERSION,
 )
 
 
@@ -359,11 +361,37 @@ def main(argv: Optional[List[str]] = None) -> int:
         initialize_ld_state_root(resolved_state_root)
         configuration = read_ld_provider_config(resolved_state_root)
 
+        codex_executable = args.codex_bin
+        if not codex_executable:
+            codex_executable = os.environ.get("LOCAL_DELEGATE_CODEX_BIN")
+        if not codex_executable:
+            codex_executable = shutil.which("codex")
+        if not codex_executable:
+            raise RuntimeError("Codex CLI was not found.")
+        codex_info = inspect_ld_codex_cli(codex_executable)
+
         # Check doctor
         last_doctor = configuration.get("lastDoctor")
         if not last_doctor or last_doctor.get("status") != "passed":
             raise RuntimeError(
                 "Provider doctor has not passed. Run doctor.py before delegation."
+            )
+        doctor_contract = (
+            last_doctor.get("codexPath"),
+            last_doctor.get("codexVersion"),
+            last_doctor.get("approvalMode"),
+            last_doctor.get("compatibilityContractVersion"),
+        )
+        current_contract = (
+            codex_info["path"],
+            codex_info["version"],
+            codex_info["approval_mode"],
+            CODEX_COMPATIBILITY_CONTRACT_VERSION,
+        )
+        if doctor_contract != current_contract:
+            raise RuntimeError(
+                "Codex CLI changed since the last successful doctor check. "
+                "Run doctor.py again before delegation."
             )
 
         profile_path = os.path.join(resolved_state_root, "codex-home", "local-developer.config.toml")
@@ -500,15 +528,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             json.dumps(baseline, indent=2) + "\n",
         )
 
-        # Locate Codex
-        codex_executable = args.codex_bin
-        if not codex_executable:
-            codex_executable = os.environ.get("LOCAL_DELEGATE_CODEX_BIN")
-        if not codex_executable:
-            codex_executable = shutil.which("codex")
-        if not codex_executable:
-            raise RuntimeError("Codex CLI was not found.")
-
         # Schema path
         script_dir = os.path.dirname(os.path.abspath(__file__))
         schema_path = os.path.normpath(os.path.join(script_dir, "..", "schemas", "developer-result.schema.json"))
@@ -516,9 +535,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         result_path = os.path.join(run_directory, "result.json")
         events_path = os.path.join(run_directory, "events.jsonl")
         stderr_path = os.path.join(run_directory, "stderr.log")
+        activity_path = os.path.join(run_directory, "activity.jsonl")
         print(f"Local developer run: {run_directory}", flush=True)
         print(f"Live event log: {events_path}", flush=True)
         print(f"Live stderr log: {stderr_path}", flush=True)
+        print(f"Activity log: {activity_path}", flush=True)
 
         tests = "\n".join(args.test_command) if args.test_command else "Use only the verification commands stated in the handoff."
         report_shape = json.dumps(
@@ -541,7 +562,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"paths: {', '.join(allowed)}. Do not modify protected paths: {', '.join(protected_set)}.\n"
             f"Inspect only the paths needed for this task; do not recursively enumerate the\n"
             f"repository root or .git. The shell is host-native. On Windows, use PowerShell\n"
-            f"syntax and never Bash heredocs. Prefer short, incremental edit commands.\n"
+            f"syntax. Never use cat, bash, sh, heredocs, multiline source inside python -c,\n"
+            f"or encoded command strings. Prefer focused inspection and short, incremental\n"
+            f"edit commands. Keep this run to one coherent bounded task.\n"
             f"Read and implement this handoff and run only its prescribed verification.\n"
             f"Your final response MUST be only one JSON object, with no markdown fences or other\n"
             f"text. It must have exactly these fields:\n"
@@ -558,6 +581,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         runner_record["timeoutMinutes"] = effective_timeout
         runner_record["inactivityTimeoutMinutes"] = effective_inactivity
         runner_record["status"] = "running"
+        runner_record["codexPath"] = codex_info["path"]
+        runner_record["codexVersion"] = codex_info["version"]
+        runner_record["approvalMode"] = codex_info["approval_mode"]
 
         # Launch codex exec
         codex_home = os.path.join(resolved_state_root, "codex-home")
@@ -573,10 +599,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "exec",
                 "--profile", "local-developer",
                 "--strict-config",
-                "--sandbox", "workspace-write",
-                "--ask-for-approval", "never",
+                *codex_info["sandbox_arguments"],
+                *codex_info["approval_arguments"],
                 "--ephemeral",
                 "--json",
+                "--output-schema", schema_path,
                 "--output-last-message",
                 result_path,
                 "--cd", repository_root,
@@ -602,6 +629,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 hard_timeout=effective_timeout * 60,
                 inactivity_timeout=effective_inactivity * 60 if effective_inactivity > 0 else 0,
                 poll_milliseconds=100,
+                activity_path=activity_path,
             )
         except Exception:
             _kill_process_tree(start.pid)
@@ -645,6 +673,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         runner_record["policyViolations"] = policy_violations
         runner_record["developerExitCode"] = process_result["exit_code"]
         runner_record["lastDeveloperActivityAt"] = process_result["last_activity_at"]
+        runner_record["developerElapsedMs"] = process_result["elapsed_ms"]
 
         if not process_result["completed"]:
             runner_record["status"] = "timeout"

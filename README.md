@@ -49,11 +49,19 @@ python scripts/configure_provider.py \
   --provider LlamaCpp \
   --base-url http://127.0.0.1:8080 \
   --model my-local-model \
-  --context-window 128000
+  --context-window 65536 \
+  --auto-compact-token-limit 49152
 ```
 
 `--context-window` describes the selected model to Codex; it does not configure
 the inference server. It defaults conservatively to 32768 tokens.
+`--auto-compact-token-limit` controls when Codex compacts the growing portion of
+the task history. It defaults to 75% of the declared context window, leaving
+headroom for instructions, tool schemas, and the next response.
+
+See [`examples/`](examples/) for optional user-managed runtime launchers,
+including a loopback llama.cpp starting point for Qwen3.6-35B-A3B on an RTX
+3090. The tool never reads launcher paths, starts runtimes, or downloads models.
 
 Configuration writes only beneath `LOCAL_DELEGATE_HOME`, which defaults to
 `$HOME/.cache/codex-local-delegation`.
@@ -66,6 +74,8 @@ python scripts/doctor.py
 
 The doctor checks the Codex CLI, provider identity, model availability,
 streaming Responses behavior, and a stateless tool-call/tool-output round trip.
+Its result is tied to the detected Codex CLI path, version, and supported
+approval interface; rerun it after updating Codex.
 
 ## Delegate
 
@@ -76,7 +86,9 @@ worktree, preserves logs outside it, and rejects out-of-scope changes.
 
 The runner has a 60-minute hard timeout and a 15-minute inactivity timeout by
 default. Any stdout or stderr from the local `codex exec` resets the inactivity
-clock. Configure repository defaults in `.codex/local-delegate.toml`:
+clock. Each run also writes timestamped byte-level activity to `activity.jsonl`
+without copying output content into that telemetry file. Configure repository
+defaults in `.codex/local-delegate.toml`:
 
 ```toml
 timeout_minutes = 60
@@ -86,6 +98,10 @@ inactivity_timeout_minutes = 15
 Set `inactivity_timeout_minutes = 0` to disable inactivity detection while
 retaining the hard timeout. For one task, `--timeout-minutes` and
 `--inactivity-timeout-minutes` override repository configuration.
+
+Local models are most reliable with one coherent implementation task per run.
+Split unrelated files or acceptance criteria into separate handoffs, then let
+the analyst review each diff and decide whether another bounded run is needed.
 
 See [SPEC.md](SPEC.md) for the complete security and behavior contract.
 
