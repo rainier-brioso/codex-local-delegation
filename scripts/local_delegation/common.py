@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+CODEX_COMPATIBILITY_CONTRACT_VERSION = 2
+
 # ---------------------------------------------------------------------------
 # State root
 # ---------------------------------------------------------------------------
@@ -360,6 +362,79 @@ def _iso_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def get_ld_codex_approval_mode(help_text: str) -> Dict[str, Any]:
+    """Select the supported non-interactive approval interface."""
+    if "--approve-for-me" in help_text:
+        return {
+            "mode": "approve-for-me",
+            "arguments": ["--approve-for-me"],
+            "sandbox_arguments": [],
+        }
+    if "--ask-for-approval" in help_text:
+        return {
+            "mode": "ask-for-approval-never",
+            "arguments": ["--ask-for-approval", "never"],
+            "sandbox_arguments": ["--sandbox", "workspace-write"],
+        }
+    raise RuntimeError(
+        "Codex CLI exposes neither --approve-for-me nor --ask-for-approval. "
+        "Install a compatible Codex CLI."
+    )
+
+
+def inspect_ld_codex_cli(codex_path: str, timeout: int = 10) -> Dict[str, Any]:
+    """Validate a Codex CLI and return its version and invocation contract."""
+    resolved_path = shutil.which(codex_path) or codex_path
+    canonical_path = os.path.normcase(
+        os.path.normpath(os.path.realpath(os.path.abspath(resolved_path)))
+    )
+    try:
+        version_result = subprocess.run(
+            [resolved_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        help_result = subprocess.run(
+            [resolved_path, "exec", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Could not inspect Codex CLI: {exc}") from exc
+
+    version_text = (version_result.stdout + version_result.stderr).strip()
+    if version_result.returncode != 0 or not version_text:
+        raise RuntimeError("Codex CLI did not return a version.")
+    help_text = help_result.stdout + help_result.stderr
+    if help_result.returncode != 0:
+        raise RuntimeError("Codex CLI could not display exec help.")
+    required_flags = [
+        "--profile",
+        "--strict-config",
+        "--sandbox",
+        "--ephemeral",
+        "--json",
+        "--output-schema",
+        "--output-last-message",
+        "--cd",
+    ]
+    missing = [flag for flag in required_flags if flag not in help_text]
+    if missing:
+        raise RuntimeError(
+            "Codex CLI does not expose required option(s): " + ", ".join(missing)
+        )
+    approval = get_ld_codex_approval_mode(help_text)
+    return {
+        "path": canonical_path,
+        "version": version_text.splitlines()[0].strip(),
+        "approval_mode": approval["mode"],
+        "approval_arguments": approval["arguments"],
+        "sandbox_arguments": approval["sandbox_arguments"],
+    }
+
+
 def wait_ld_process_with_activity_timeout(
     process: subprocess.Popen,
     standard_output_path: str,
@@ -367,6 +442,7 @@ def wait_ld_process_with_activity_timeout(
     hard_timeout: float,
     inactivity_timeout: float,
     poll_milliseconds: int = 100,
+    activity_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Wait for *process* with activity-based inactivity timeout.
 
@@ -381,12 +457,24 @@ def wait_ld_process_with_activity_timeout(
     termination_reason: Optional[str] = None
     poll_interval = poll_milliseconds / 1000.0
 
-    for artifact_path in (standard_output_path, standard_error_path):
+    artifact_paths = [standard_output_path, standard_error_path]
+    if activity_path:
+        artifact_paths.append(activity_path)
+    for artifact_path in artifact_paths:
         artifact_parent = os.path.dirname(artifact_path)
         if artifact_parent:
             os.makedirs(artifact_parent, exist_ok=True)
 
-    def _read_stream(stream: Any, artifact: Any) -> None:
+    activity_artifact = None
+
+    def _record_activity(event: str, **fields: Any) -> None:
+        if activity_artifact is None:
+            return
+        record = {"timestamp": _iso_timestamp(), "event": event, **fields}
+        activity_artifact.write(json.dumps(record, separators=(",", ":")) + "\n")
+        activity_artifact.flush()
+
+    def _read_stream(stream_name: str, stream: Any, artifact: Any) -> None:
         nonlocal last_activity_time, last_activity_at
         try:
             while True:
@@ -401,49 +489,63 @@ def wait_ld_process_with_activity_timeout(
                 with activity_lock:
                     last_activity_time = time.monotonic()
                     last_activity_at = _iso_timestamp()
+                    _record_activity("stream.activity", stream=stream_name, bytes=len(chunk))
         except BaseException as exc:
             reader_errors.append(exc)
 
-    with open(standard_output_path, "wb") as stdout_artifact, open(
-        standard_error_path, "wb"
-    ) as stderr_artifact:
-        stdout_thread = threading.Thread(
-            target=_read_stream,
-            args=(process.stdout, stdout_artifact),
-            name="local-delegate-stdout",
-            daemon=True,
-        )
-        stderr_thread = threading.Thread(
-            target=_read_stream,
-            args=(process.stderr, stderr_artifact),
-            name="local-delegate-stderr",
-            daemon=True,
-        )
-        stdout_thread.start()
-        stderr_thread.start()
+    try:
+        if activity_path:
+            activity_artifact = open(activity_path, "w", encoding="utf-8")
+        _record_activity("process.started", pid=process.pid)
+        with open(standard_output_path, "wb") as stdout_artifact, open(
+            standard_error_path, "wb"
+        ) as stderr_artifact:
+            stdout_thread = threading.Thread(
+                target=_read_stream,
+                args=("stdout", process.stdout, stdout_artifact),
+                name="local-delegate-stdout",
+                daemon=True,
+            )
+            stderr_thread = threading.Thread(
+                target=_read_stream,
+                args=("stderr", process.stderr, stderr_artifact),
+                name="local-delegate-stderr",
+                daemon=True,
+            )
+            stdout_thread.start()
+            stderr_thread.start()
 
-        while process.poll() is None:
-            now = time.monotonic()
-            with activity_lock:
-                inactive_for = now - last_activity_time
-            if now - start_time >= hard_timeout:
-                termination_reason = "hard-timeout"
+            while process.poll() is None:
+                now = time.monotonic()
+                with activity_lock:
+                    inactive_for = now - last_activity_time
+                if now - start_time >= hard_timeout:
+                    termination_reason = "hard-timeout"
+                    _kill_process_tree(process.pid)
+                elif inactivity_timeout > 0 and inactive_for >= inactivity_timeout:
+                    termination_reason = "inactivity-timeout"
+                    _kill_process_tree(process.pid)
+                if termination_reason is not None:
+                    break
+                time.sleep(poll_interval)
+
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
                 _kill_process_tree(process.pid)
-            elif inactivity_timeout > 0 and inactive_for >= inactivity_timeout:
-                termination_reason = "inactivity-timeout"
-                _kill_process_tree(process.pid)
-            if termination_reason is not None:
-                break
-            time.sleep(poll_interval)
+                process.wait(timeout=5)
 
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            _kill_process_tree(process.pid)
-            process.wait(timeout=5)
-
-        stdout_thread.join(timeout=5)
-        stderr_thread.join(timeout=5)
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+        _record_activity(
+            "process.finished",
+            exit_code=process.returncode if termination_reason is None else -1,
+            termination_reason=termination_reason,
+            elapsed_ms=int((time.monotonic() - start_time) * 1000),
+        )
+    finally:
+        if activity_artifact is not None:
+            activity_artifact.close()
 
     for stream in (process.stdout, process.stderr):
         if stream is not None and not stream.closed:

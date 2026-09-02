@@ -29,6 +29,7 @@ from local_delegation.common import (
     get_ld_origin_and_responses_base,
     get_ld_state_root,
     get_ld_sha256_text,
+    get_ld_codex_approval_mode,
     http_get,
     http_post,
     initialize_ld_state_root,
@@ -41,6 +42,7 @@ from local_delegation.common import (
     release_ld_file_lock,
 )
 from run_local_developer import (
+    is_path_beneath,
     resolve_timeout_settings,
     validate_handoff_constraints,
     validate_json_schema_subset,
@@ -323,6 +325,7 @@ class TestProcessTimeout(unittest.TestCase):
             )
             events_path = os.path.join(tmpdir, "events.jsonl")
             stderr_path = os.path.join(tmpdir, "stderr.log")
+            activity_path = os.path.join(tmpdir, "activity.jsonl")
             try:
                 result = wait_ld_process_with_activity_timeout(
                     proc,
@@ -331,12 +334,25 @@ class TestProcessTimeout(unittest.TestCase):
                     hard_timeout=15.0,
                     inactivity_timeout=2.0,
                     poll_milliseconds=50,
+                    activity_path=activity_path,
                 )
                 self.assertTrue(result["completed"])
                 self.assertEqual(result["exit_code"], 0)
                 self.assertIn("0", Path(events_path).read_text(encoding="utf-8"))
                 self.assertIn("err-4", Path(stderr_path).read_text(encoding="utf-8"))
                 datetime.fromisoformat(result["last_activity_at"].replace("Z", "+00:00"))
+                activity = [
+                    json.loads(line)
+                    for line in Path(activity_path).read_text(encoding="utf-8").splitlines()
+                ]
+                self.assertEqual(activity[0]["event"], "process.started")
+                self.assertEqual(activity[-1]["event"], "process.finished")
+                self.assertEqual(
+                    {item["stream"] for item in activity if item["event"] == "stream.activity"},
+                    {"stdout", "stderr"},
+                )
+                for item in activity:
+                    datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00"))
             finally:
                 if proc.poll() is None:
                     _kill_process_tree(proc.pid)
@@ -384,6 +400,53 @@ class TestProcessTimeout(unittest.TestCase):
 
 
 class TestRunnerValidation(unittest.TestCase):
+    def test_current_codex_approval_mode_is_preferred(self):
+        result = get_ld_codex_approval_mode(
+            "--ask-for-approval VALUE\n--approve-for-me"
+        )
+        self.assertEqual(result["mode"], "approve-for-me")
+        self.assertEqual(result["arguments"], ["--approve-for-me"])
+        self.assertEqual(result["sandbox_arguments"], [])
+
+    def test_legacy_codex_approval_mode_is_supported(self):
+        result = get_ld_codex_approval_mode("--ask-for-approval VALUE")
+        self.assertEqual(result["mode"], "ask-for-approval-never")
+        self.assertEqual(result["arguments"], ["--ask-for-approval", "never"])
+        self.assertEqual(result["sandbox_arguments"], ["--sandbox", "workspace-write"])
+
+    def test_path_containment_rejects_root_and_sibling(self):
+        """Containment accepts descendants only, not the root or prefix-matching siblings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repository = Path(tmpdir, "repository")
+            descendant = repository / "handoff.md"
+            sibling = Path(tmpdir, "repository-sibling", "handoff.md")
+            descendant.parent.mkdir(parents=True)
+            sibling.parent.mkdir(parents=True)
+            descendant.write_text("test", encoding="utf-8")
+            sibling.write_text("test", encoding="utf-8")
+
+            self.assertTrue(is_path_beneath(str(repository), str(descendant)))
+            self.assertFalse(is_path_beneath(str(repository), str(repository)))
+            self.assertFalse(is_path_beneath(str(repository), str(sibling)))
+
+    @unittest.skipUnless(sys.platform == "win32", "NTFS short paths are Windows-specific")
+    def test_path_containment_accepts_ntfs_short_alias(self):
+        """An 8.3 alias and its long path identify the same repository tree."""
+        import ctypes
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repository = Path(tmpdir, "repository-long-name")
+            handoff = repository / ".codex" / "local-handoffs" / "runner-test" / "request.md"
+            handoff.parent.mkdir(parents=True)
+            handoff.write_text("test", encoding="utf-8")
+
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = ctypes.windll.kernel32.GetShortPathNameW(str(handoff), buffer, len(buffer))
+            if length == 0 or os.path.normcase(buffer.value) == os.path.normcase(str(handoff)):
+                self.skipTest("NTFS 8.3 aliases are unavailable on this volume")
+
+            self.assertTrue(is_path_beneath(str(repository), buffer.value))
+
     def test_timeout_precedence(self):
         self.assertEqual(resolve_timeout_settings(None, None, {}), (60, 15))
         self.assertEqual(
@@ -627,8 +690,12 @@ import os
 import pathlib
 import sys
 
+if "--version" in sys.argv:
+    print("codex-cli 0.test")
+    raise SystemExit(0)
+
 if "--help" in sys.argv:
-    print("--profile --strict-config --sandbox --ask-for-approval --ephemeral --json --output-last-message --cd")
+    print("--profile --strict-config --sandbox --approve-for-me --ephemeral --json --output-schema --output-last-message --cd")
     raise SystemExit(0)
 
 prompt = sys.stdin.read()
@@ -712,6 +779,8 @@ print("fake codex stderr", file=sys.stderr, flush=True)
         with open(profile_path, "r") as f:
             content = f.read()
         self.assertIn('web_search = "disabled"', content)
+        self.assertIn("model_auto_compact_token_limit = 24576", content)
+        self.assertIn('model_auto_compact_token_limit_scope = "body_after_prefix"', content)
 
     def test_model_catalog_generated(self):
         """Model catalog selects shell_command and records model."""
@@ -724,7 +793,7 @@ print("fake codex stderr", file=sys.stderr, flush=True)
         self.assertEqual(catalog["models"][0]["slug"], "local-test-model")
         self.assertEqual(catalog["models"][0]["shell_type"], "shell_command")
         self.assertEqual(catalog["models"][0]["context_window"], 32768)
-        self.assertIn("never Bash heredocs", catalog["models"][0]["base_instructions"])
+        self.assertIn("Never use cat, bash, sh, heredocs", catalog["models"][0]["base_instructions"])
 
     def test_provider_config_generated(self):
         """Provider config records schema version and model."""
@@ -735,6 +804,7 @@ print("fake codex stderr", file=sys.stderr, flush=True)
         self.assertEqual(config["schemaVersion"], 1)
         self.assertEqual(config["provider"], "Custom")
         self.assertEqual(config["model"], "local-test-model")
+        self.assertEqual(config["autoCompactTokenLimit"], 24576)
 
     def test_doctor_succeeds(self):
         """The actual doctor entry point probes and records success."""
@@ -751,6 +821,9 @@ print("fake codex stderr", file=sys.stderr, flush=True)
         self.assertEqual(exit_code, 0)
         config = read_ld_provider_config(self.integration_root)
         self.assertEqual(config["lastDoctor"]["status"], "passed")
+        self.assertEqual(config["lastDoctor"]["codexVersion"], "codex-cli 0.test")
+        self.assertEqual(config["lastDoctor"]["approvalMode"], "approve-for-me")
+        self.assertEqual(config["lastDoctor"]["compatibilityContractVersion"], 2)
 
     def test_runner_end_to_end(self):
         """The runner sends its prompt and preserves run artifacts."""
@@ -804,16 +877,45 @@ print("fake codex stderr", file=sys.stderr, flush=True)
         self.assertEqual(exit_code, 0)
         received_prompt = Path(prompt_path).read_text(encoding="utf-8")
         self.assertIn("You are the delegated local developer", received_prompt)
-        self.assertIn("never Bash heredocs", received_prompt)
+        self.assertIn("Never use cat, bash, sh, heredocs", received_prompt)
         received_args = json.loads(Path(args_path).read_text(encoding="utf-8"))
-        self.assertEqual(received_args[received_args.index("--sandbox") + 1], "workspace-write")
-        self.assertEqual(received_args[received_args.index("--ask-for-approval") + 1], "never")
-        self.assertNotIn("--approve-for-me", received_args)
+        self.assertIn("--approve-for-me", received_args)
+        self.assertNotIn("--ask-for-approval", received_args)
+        self.assertNotIn("--sandbox", received_args)
+        self.assertTrue(received_args[received_args.index("--output-schema") + 1].endswith("developer-result.schema.json"))
         runner_record = json.loads((handoff_dir / "runner.json").read_text(encoding="utf-8"))
         self.assertEqual(runner_record["status"], "completed")
         run_dir = Path(runner_record["runDirectory"])
         self.assertIn("turn.completed", (run_dir / "events.jsonl").read_text(encoding="utf-8"))
         self.assertIn("fake codex stderr", (run_dir / "stderr.log").read_text(encoding="utf-8"))
+        activity = [
+            json.loads(line)
+            for line in (run_dir / "activity.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(activity[-1]["event"], "process.finished")
+        self.assertEqual(runner_record["codexVersion"], "codex-cli 0.test")
+
+    def test_runner_rejects_stale_codex_doctor_result(self):
+        """A Codex CLI change requires doctor to be run again."""
+        from run_local_developer import main as runner_main
+
+        config_path = os.path.join(self.integration_root, "config", "provider.json")
+        config = read_ld_provider_config(self.integration_root)
+        original_version = config["lastDoctor"]["codexVersion"]
+        config["lastDoctor"]["codexVersion"] = "codex-cli stale"
+        Path(config_path).write_text(json.dumps(config), encoding="utf-8")
+        try:
+            exit_code = runner_main([
+                "--repository", self.integration_root,
+                "--handoff-path", os.path.join(self.integration_root, "missing.md"),
+                "--allowed-path", "work.txt",
+                "--state-root", self.integration_root,
+                "--codex-bin", self.codex_path,
+            ])
+            self.assertEqual(exit_code, 20)
+        finally:
+            config["lastDoctor"]["codexVersion"] = original_version
+            Path(config_path).write_text(json.dumps(config), encoding="utf-8")
 
     def test_multiple_providers_detected(self):
         """If multiple providers respond, configuration requires explicit choice."""

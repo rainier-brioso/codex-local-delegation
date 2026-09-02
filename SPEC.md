@@ -117,8 +117,9 @@ The runner is the developer harness. It will:
 - use the state-owned, isolated `local-developer` profile and `CODEX_HOME` rather
   than inheriting the Desktop user's hooks, MCP servers, or provider settings;
 - invoke `codex exec` with an explicit repository working directory,
-  an explicit workspace-write sandbox, approval prompts disabled, network
-  disabled, ephemeral session storage, JSONL output, a configurable hard
+  a workspace-write sandbox selected either explicitly or by the current
+  automatic-review interface, network disabled, ephemeral session storage,
+  schema-constrained final output, JSONL events, a configurable hard
   wall-clock timeout (60 minutes by default), and a configurable inactivity
   timeout (15 minutes by default, with zero disabling inactivity detection);
 - set `LOCAL_DELEGATION_ACTIVE=1` for the child process;
@@ -156,6 +157,7 @@ Each run uses an authoritative directory outside the delegated workspace:
   baseline.json
   baseline-files\
   events.jsonl
+  activity.jsonl
   result.json
   stderr.log
   runner.json
@@ -183,6 +185,8 @@ verification failure, and `50` scope or Git-policy violation.
 The diagnostics script does not modify an opted-in repository. It validates:
 
 - the `codex` executable is available;
+- the CLI exposes the required execution flags and records its canonical path,
+  version, and approval interface so the runner rejects a stale doctor result;
 - the `local-developer` profile file exists and is syntactically present;
 - the configured local endpoint is reachable and identifies as the expected
   provider when a provider-specific identity endpoint is available;
@@ -268,6 +272,8 @@ model_provider = "local-developer"
 model = "<selected-model-id>"
 model_catalog_json = "<LOCAL_DELEGATE_HOME>\\codex-home\\model-catalog.json"
 model_reasoning_summary = "none"
+model_auto_compact_token_limit = 24576
+model_auto_compact_token_limit_scope = "body_after_prefix"
 web_search = "disabled"
 
 [features]
@@ -289,6 +295,9 @@ provider's reported models. Automatic selection is allowed only when exactly one
 model is available; otherwise configuration requires a model choice. The
 optional context-window value describes the selected model to Codex and defaults
 to 32768; it does not change the inference server's runtime configuration. The
+auto-compaction limit defaults to 75% of that declared window and can be set
+explicitly. It counts the growing history after the carried compaction prefix,
+leaving more room than the model catalog's final 90% truncation ceiling. The
 generated model catalog selects Codex's function-based `shell_command` tool and
 turns off unsupported reasoning and parallel-tool metadata. The final developer
 response is prompted as JSON and validated locally against

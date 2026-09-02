@@ -18,12 +18,19 @@ from local_delegation.common import (
 )
 
 
-def build_profile(responses_base_url: str, selected_model: str, context_window: int, catalog_path: str) -> str:
+def build_profile(
+    responses_base_url: str,
+    selected_model: str,
+    catalog_path: str,
+    auto_compact_token_limit: int,
+) -> str:
     return (
         f'model_provider = "local-developer"\n'
         f'model = {convert_to_ld_toml_string(selected_model)}\n'
         f'model_catalog_json = {convert_to_ld_toml_string(catalog_path)}\n'
         f'model_reasoning_summary = "none"\n'
+        f'model_auto_compact_token_limit = {auto_compact_token_limit}\n'
+        f'model_auto_compact_token_limit_scope = "body_after_prefix"\n'
         f'web_search = "disabled"\n'
         f'\n'
         f'[features]\n'
@@ -64,9 +71,10 @@ def build_catalog(selected_model: str, context_window: int) -> str:
                     "Follow the supplied repository instructions and task handoff. "
                     "Use the shell_command function for repository inspection, "
                     "edits, and verification. The shell is host-native; on Windows "
-                    "use PowerShell syntax and never Bash heredocs. Prefer short, "
-                    "incremental commands over large encoded or generated command "
-                    "strings. Do not delegate work."
+                    "use PowerShell syntax. Never use cat, bash, sh, heredocs, or "
+                    "multiline source embedded in python -c or encoded command "
+                    "strings. Prefer focused inspection and short, incremental "
+                    "edit commands. Do not delegate work."
                 ),
                 "supports_parallel_tool_calls": False,
                 "experimental_supported_tools": [],
@@ -95,6 +103,15 @@ def main(args: list = None) -> int:
         default=32768,
         help="Context window size (default: 32768).",
     )
+    parser.add_argument(
+        "--auto-compact-token-limit",
+        type=int,
+        default=None,
+        help=(
+            "Compact after this many body tokens; defaults to 75%% of the "
+            "configured context window."
+        ),
+    )
     parser.add_argument("--state-root", default=None, help="State root directory.")
     parser.add_argument(
         "--timeout-seconds",
@@ -105,6 +122,13 @@ def main(args: list = None) -> int:
     parsed = parser.parse_args(args)
     if not 4096 <= parsed.context_window <= 1048576:
         parser.error("--context-window must be between 4096 and 1048576")
+    if parsed.auto_compact_token_limit is None:
+        parsed.auto_compact_token_limit = int(math.floor(parsed.context_window * 0.75))
+    if not 1024 <= parsed.auto_compact_token_limit < parsed.context_window:
+        parser.error(
+            "--auto-compact-token-limit must be at least 1024 and smaller than "
+            "--context-window"
+        )
     if parsed.timeout_seconds < 1:
         parser.error("--timeout-seconds must be at least 1")
 
@@ -202,6 +226,7 @@ def main(args: list = None) -> int:
             "responsesBaseUrl": probe["responses_base_url"],
             "model": selected_model,
             "contextWindow": parsed.context_window,
+            "autoCompactTokenLimit": parsed.auto_compact_token_limit,
             "selection": "explicit" if explicit else "discovered",
             "configuredAt": datetime.now(timezone.utc).isoformat(),
             "lastDoctor": None,
@@ -216,12 +241,18 @@ def main(args: list = None) -> int:
 
         # Write profile
         profile_path = os.path.join(resolved_state_root, "codex-home", "local-developer.config.toml")
-        profile = build_profile(probe["responses_base_url"], selected_model, parsed.context_window, catalog_path)
+        profile = build_profile(
+            probe["responses_base_url"],
+            selected_model,
+            catalog_path,
+            parsed.auto_compact_token_limit,
+        )
         write_ld_utf8_file(profile_path, profile)
 
         print(f"Configured {probe['identity']}")
         print(f"Model: {selected_model}")
         print(f"Context window: {parsed.context_window}")
+        print(f"Auto-compaction limit: {parsed.auto_compact_token_limit}")
         print(f"Responses base URL: {probe['responses_base_url']}")
         print(f"State: {resolved_state_root}")
         print("Run doctor.py before delegation.")

@@ -2,6 +2,8 @@ model_provider = "local-developer"
 model = "<selected-model-id>"
 model_catalog_json = "<state-root>\\codex-home\\model-catalog.json"
 model_reasoning_summary = "none"
+model_auto_compact_token_limit = 24576
+model_auto_compact_token_limit_scope = "body_after_prefix"
 web_search = "disabled"
 
 [features]
