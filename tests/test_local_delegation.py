@@ -41,6 +41,7 @@ from local_delegation.common import (
     release_ld_file_lock,
 )
 from run_local_developer import (
+    is_path_beneath,
     resolve_timeout_settings,
     validate_handoff_constraints,
     validate_json_schema_subset,
@@ -384,6 +385,39 @@ class TestProcessTimeout(unittest.TestCase):
 
 
 class TestRunnerValidation(unittest.TestCase):
+    def test_path_containment_rejects_root_and_sibling(self):
+        """Containment accepts descendants only, not the root or prefix-matching siblings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repository = Path(tmpdir, "repository")
+            descendant = repository / "handoff.md"
+            sibling = Path(tmpdir, "repository-sibling", "handoff.md")
+            descendant.parent.mkdir(parents=True)
+            sibling.parent.mkdir(parents=True)
+            descendant.write_text("test", encoding="utf-8")
+            sibling.write_text("test", encoding="utf-8")
+
+            self.assertTrue(is_path_beneath(str(repository), str(descendant)))
+            self.assertFalse(is_path_beneath(str(repository), str(repository)))
+            self.assertFalse(is_path_beneath(str(repository), str(sibling)))
+
+    @unittest.skipUnless(sys.platform == "win32", "NTFS short paths are Windows-specific")
+    def test_path_containment_accepts_ntfs_short_alias(self):
+        """An 8.3 alias and its long path identify the same repository tree."""
+        import ctypes
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repository = Path(tmpdir, "repository-long-name")
+            handoff = repository / ".codex" / "local-handoffs" / "runner-test" / "request.md"
+            handoff.parent.mkdir(parents=True)
+            handoff.write_text("test", encoding="utf-8")
+
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = ctypes.windll.kernel32.GetShortPathNameW(str(handoff), buffer, len(buffer))
+            if length == 0 or os.path.normcase(buffer.value) == os.path.normcase(str(handoff)):
+                self.skipTest("NTFS 8.3 aliases are unavailable on this volume")
+
+            self.assertTrue(is_path_beneath(str(repository), buffer.value))
+
     def test_timeout_precedence(self):
         self.assertEqual(resolve_timeout_settings(None, None, {}), (60, 15))
         self.assertEqual(

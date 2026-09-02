@@ -44,6 +44,25 @@ def convert_to_relative_path(path: str) -> str:
     return normal
 
 
+def canonicalize_path(path: str) -> str:
+    """Return a normalized physical path, expanding aliases such as NTFS 8.3 names."""
+    return os.path.normpath(os.path.realpath(os.path.abspath(path)))
+
+
+def is_path_beneath(root: str, candidate: str) -> bool:
+    """Return whether an existing candidate is strictly beneath root."""
+    canonical_root = canonicalize_path(root)
+    canonical_candidate = canonicalize_path(candidate)
+    try:
+        common = os.path.commonpath([canonical_root, canonical_candidate])
+    except ValueError:
+        return False
+    return (
+        os.path.normcase(common) == os.path.normcase(canonical_root)
+        and os.path.normcase(canonical_candidate) != os.path.normcase(canonical_root)
+    )
+
+
 def assert_path_inside_repository(
     repository_root: str,
     relative_path: str,
@@ -366,7 +385,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             raise RuntimeError(f"Provider preflight failed: {exc}") from exc
 
         # Validate repository
-        requested_repo = os.path.normpath(os.path.abspath(args.repository))
+        requested_repo = canonicalize_path(args.repository)
         try:
             result = subprocess.run(
                 ["git", "-C", requested_repo, "rev-parse", "--show-toplevel"],
@@ -375,7 +394,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 check=True,
                 timeout=10,
             )
-            repository_root = os.path.normpath(result.stdout.strip())
+            repository_root = canonicalize_path(result.stdout.strip())
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             raise RuntimeError(f"Invalid repository: {args.repository}") from exc
 
@@ -388,9 +407,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
         # Validate handoff
-        handoff_full_path = os.path.normpath(os.path.abspath(args.handoff_path))
-        root_prefix = repository_root.rstrip(os.sep) + os.sep
-        if not handoff_full_path.startswith(root_prefix) or not os.path.isfile(handoff_full_path):
+        handoff_full_path = canonicalize_path(args.handoff_path)
+        if not os.path.isfile(handoff_full_path) or not is_path_beneath(repository_root, handoff_full_path):
             raise RuntimeError("Handoff must be an existing file beneath the repository root.")
 
         task_id = os.path.basename(os.path.dirname(handoff_full_path))
