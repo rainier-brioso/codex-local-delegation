@@ -6,8 +6,8 @@ rem   LLAMA_SERVER_EXE  Full path to llama-server.exe
 rem   LLAMA_MODEL_PATH  Full path to the Qwen3.6-35B-A3B Q4_K_S GGUF
 rem
 rem Example from PowerShell:
-rem   $env:LLAMA_SERVER_EXE = "C:\AI\llama-cpp\llama-server.exe"
-rem   $env:LLAMA_MODEL_PATH = "C:\AI\models\Qwen3.6-35B-A3B-UD-Q4_K_S.gguf"
+rem   $env:LLAMA_SERVER_EXE = "C:\path\to\llama-server.exe"
+rem   $env:LLAMA_MODEL_PATH = "C:\path\to\Qwen3.6-35B-A3B-UD-Q4_K_S.gguf"
 rem   .\llama-cpp-qwen3.6-35b-rtx3090.recommended.bat
 rem
 rem This launcher is user-managed. Codex Local Delegation never reads these
