@@ -93,7 +93,7 @@ class TestCodexCliDiscovery(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             executable = Path(tmpdir) / "codex.exe"
             executable.touch()
-            self.assertEqual(find_ld_codex_cli(str(executable)), str(executable.resolve()))
+            self.assertTrue(os.path.samefile(find_ld_codex_cli(str(executable)), executable))
 
     def test_missing_override_is_an_error(self):
         with self.assertRaisesRegex(RuntimeError, "LOCAL_DELEGATE_CODEX_BIN does not exist"):
