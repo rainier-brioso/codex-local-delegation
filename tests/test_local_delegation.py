@@ -47,15 +47,6 @@ from run_local_developer import (
     validate_handoff_constraints,
     validate_json_schema_subset,
 )
-from setup_repository import (
-    END_MARKER,
-    HANDOFF_EXCLUDE,
-    MANAGED_POLICY,
-    START_MARKER,
-    main as setup_repository_main,
-    update_agents_content,
-)
-
 
 def start_test_process(code):
     options = {}
@@ -542,74 +533,6 @@ class TestJsonResponse(unittest.TestCase):
             convert_from_ld_json_response(resp)
 
 
-class TestRepositorySetup(unittest.TestCase):
-    """Tests for idempotent repository preference setup."""
-
-    def test_setup_preserves_existing_agents_and_is_idempotent(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.run(["git", "init", "-q", tmpdir], check=True)
-            agents_path = Path(tmpdir, "AGENTS.md")
-            agents_path.write_text("# Existing project rules\n\nKeep this.\n", encoding="utf-8")
-
-            self.assertEqual(
-                setup_repository_main(["--repository", tmpdir]),
-                0,
-            )
-            first_agents = agents_path.read_text(encoding="utf-8")
-            self.assertIn("# Existing project rules", first_agents)
-            self.assertIn("Keep this.", first_agents)
-            self.assertEqual(first_agents.count(START_MARKER), 1)
-            self.assertEqual(first_agents.count(END_MARKER), 1)
-
-            exclude_path = subprocess.run(
-                ["git", "-C", tmpdir, "rev-parse", "--git-path", "info/exclude"],
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.strip()
-            if not os.path.isabs(exclude_path):
-                exclude_path = os.path.join(tmpdir, exclude_path)
-            first_exclude = Path(exclude_path).read_text(encoding="utf-8")
-            self.assertEqual(first_exclude.splitlines().count(HANDOFF_EXCLUDE), 1)
-
-            self.assertEqual(
-                setup_repository_main(["--repository", tmpdir]),
-                0,
-            )
-            self.assertEqual(agents_path.read_text(encoding="utf-8"), first_agents)
-            self.assertEqual(Path(exclude_path).read_text(encoding="utf-8"), first_exclude)
-            self.assertEqual(
-                setup_repository_main(["--repository", tmpdir, "--check"]),
-                0,
-            )
-
-    def test_setup_creates_agents_file(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.run(["git", "init", "-q", tmpdir], check=True)
-            self.assertEqual(setup_repository_main(["--repository", tmpdir]), 0)
-            content = Path(tmpdir, "AGENTS.md").read_text(encoding="utf-8")
-            self.assertIn(START_MARKER, content)
-            self.assertIn("Prefer `$local-delegate`", content)
-
-    def test_check_reports_unconfigured_without_writing(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.run(["git", "init", "-q", tmpdir], check=True)
-            self.assertEqual(
-                setup_repository_main(["--repository", tmpdir, "--check"]),
-                1,
-            )
-            self.assertFalse(Path(tmpdir, "AGENTS.md").exists())
-
-    def test_malformed_markers_are_rejected(self):
-        with self.assertRaises(RuntimeError):
-            update_agents_content(f"rules\n{START_MARKER}\nincomplete\n")
-
-    def test_workspace_template_matches_managed_policy(self):
-        template = Path(
-            os.path.dirname(__file__), "..", "templates", "workspace-AGENTS.md"
-        ).read_text(encoding="utf-8")
-        self.assertEqual(template.strip(), MANAGED_POLICY)
-
 class TestScriptSyntax(unittest.TestCase):
     """Tests for script syntax and schema validity."""
 
@@ -637,15 +560,6 @@ class TestScriptSyntax(unittest.TestCase):
         scripts_dir = os.path.join(os.path.dirname(__file__), "..", "scripts")
         py_compile.compile(
             os.path.join(scripts_dir, "run_local_developer.py"),
-            doraise=True,
-        )
-
-    def test_setup_repository_syntax(self):
-        """setup_repository.py parses without syntax errors."""
-        import py_compile
-        scripts_dir = os.path.join(os.path.dirname(__file__), "..", "scripts")
-        py_compile.compile(
-            os.path.join(scripts_dir, "setup_repository.py"),
             doraise=True,
         )
 
@@ -705,26 +619,28 @@ class TestDocReferences(unittest.TestCase):
     def test_skill_uses_python(self):
         """Skill references Python entry points."""
         skill_path = os.path.join(os.path.dirname(__file__), "..", "skills", "local-delegate", "SKILL.md")
-        with open(skill_path, "r") as f:
+        with open(skill_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("configure_provider.py", content)
         self.assertIn("doctor.py", content)
         self.assertIn("run_local_developer.py", content)
-        self.assertIn("setup_repository.py", content)
+        self.assertNotIn("setup_repository.py", content)
+        self.assertIn("never require or create a repository `AGENTS.md` opt-in", content)
 
     def test_readme_uses_python(self):
         """README references Python entry points."""
         readme_path = os.path.join(os.path.dirname(__file__), "..", "README.md")
-        with open(readme_path, "r") as f:
+        with open(readme_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("configure_provider.py", content)
         self.assertIn("doctor.py", content)
-        self.assertIn("setup_repository.py", content)
+        self.assertNotIn("setup_repository.py", content)
+        self.assertIn("without modifying", content)
 
     def test_contributing_uses_python(self):
         """CONTRIBUTING references Python test command."""
         contrib_path = os.path.join(os.path.dirname(__file__), "..", "CONTRIBUTING.md")
-        with open(contrib_path, "r") as f:
+        with open(contrib_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("python -m unittest", content)
 

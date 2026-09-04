@@ -8,7 +8,7 @@ exposed by an already-running, Responses-compatible local inference
 server. Version 1 recognises Ollama and `llama.cpp` and also accepts an explicit
 compatible endpoint.
 
-The plugin must work from any Codex Desktop session and any opted-in repository.
+The plugin must work from any Codex Desktop session and any Git repository.
 It must not change the model used by the Desktop analyst session.
 
 ## Product name
@@ -70,14 +70,12 @@ codex-local-delegation/
       SKILL.md
   scripts/
     configure_provider.py
-    setup_repository.py
     run_local_developer.py
     doctor.py
     local_delegation/
       __init__.py
       common.py
   templates/
-    workspace-AGENTS.md
     local-delegate.toml
     local-developer.config.toml.example
   schemas/
@@ -183,7 +181,7 @@ verification failure, and `50` scope or Git-policy violation.
 
 ### `doctor.py`
 
-The diagnostics script does not modify an opted-in repository. It validates:
+The diagnostics script does not modify a user repository. It validates:
 
 - the `codex` executable is available;
 - the CLI exposes the required execution flags and records its canonical path,
@@ -309,35 +307,13 @@ directory. The Desktop-wide `~/.codex/config.toml` remains unchanged. Installing
 copy of the profile into the normal Codex home is a separate, confirmed action
 for manual troubleshooting and is not required by the plugin.
 
-## Per-workspace preference
+## Per-workspace settings
 
-Explicit `$local-delegate` invocation is a per-task authorization and requires
-no repository setup. A repository may configure local delegation as its
-automatic preference. It contains only policy and optional settings, not a copy
-of the plugin scripts:
-
-```text
-repository/
-  AGENTS.md
-  .codex/
-    local-delegate.toml       # optional overrides
-    local-handoffs/           # generated, normally gitignored
-```
-
-The bundled idempotent setup command adds or updates a marked `AGENTS.md` policy
-without replacing existing repository instructions, and adds the handoff path
-to `.git/info/exclude`:
-
-```bash
-python scripts/setup_repository.py --repository <repository>
-```
-
-The exact managed block is defined by `templates/workspace-AGENTS.md`. Its
-markers let later plugin versions update only that block without treating the
-rest of `AGENTS.md` as plugin-owned content.
-
-Repository-specific `AGENTS.md` files may add canonical test commands,
-architectural constraints, and protected paths. The optional TOML file may set
+The installed `$local-delegate` skill is available in every Git repository.
+It never creates or changes a repository `AGENTS.md` file. Repository-specific
+`AGENTS.md` files may independently add canonical test commands, architectural
+constraints, and protected paths. The optional `.codex/local-delegate.toml`
+file may set
 the hard and inactivity timeouts, default test command, and paths that require
 analyst review. Explicit runner timeout flags override repository values. The
 state-owned worker profile is not replaceable by repository configuration.
@@ -362,11 +338,9 @@ Every generated handoff must contain:
 
 - Delegation is a request for implementation, not permission to widen scope.
 - The analyst reviews all diffs before presenting work as complete.
-- Generated handoffs and output logs are ignored by Git unless a repository
-  explicitly chooses to retain them.
-- The explicit repository setup command adds `.codex/local-handoffs/` to
-  `.git/info/exclude`. The runner itself still warns when artifacts are visible
-  to Git and does not silently modify ignore rules.
+- The runner does not change Git ignore configuration. It warns when generated
+  handoffs are visible to Git; repositories may choose whether to ignore or
+  retain them.
 - The runner uses an explicit working directory and never executes against a
   parent workspace by accident.
 - Resolved allowed paths must remain beneath the repository root after symlink
@@ -386,9 +360,9 @@ The project is a personal Codex plugin:
 1. Install it once through the personal plugin marketplace.
 2. The `$local-delegate` skill then becomes available in all Codex Desktop and
    Codex CLI sessions on this machine.
-3. Explicitly invoke `$local-delegate` with no repository setup, or run the
-   bundled setup command once in repositories that should prefer delegation
-   automatically. The optional TOML file remains available for timeout overrides.
+3. Invoke `$local-delegate`, or ask Codex to delegate a bounded implementation
+   task to the configured local model. The optional TOML file remains available
+   for timeout overrides.
 4. Run `doctor.py` after configuration and after provider, model, or Codex CLI
    upgrades.
 

@@ -80,17 +80,12 @@ approval interface; rerun it after updating Codex.
 ## Delegate
 
 Install the plugin and invoke `$local-delegate` with a bounded task in any Git
-repository. Explicit invocation requires no repository setup. To make local
-delegation the automatic preference for suitable implementation tasks in one
-repository, ask Codex to "enable local delegation for this repository," or run:
+repository. You can also ask Codex to “delegate this implementation to my local
+model”; the installed skill is available for that workflow without modifying
+the repository or its `AGENTS.md` file.
 
-```bash
-python scripts/setup_repository.py --repository <repository>
-```
-
-The idempotent setup preserves existing `AGENTS.md` instructions, owns only a
-marked policy block, and adds `.codex/local-handoffs/` to the repository's local
-Git exclude file. Users do not need to write the policy themselves.
+`$local-delegate` is the deterministic option. Natural-language requests are
+matched to the installed skill when they clearly ask for local delegation.
 
 The skill creates a handoff and calls the runner. The runner edits the current
 worktree, preserves logs outside it, and rejects out-of-scope changes.

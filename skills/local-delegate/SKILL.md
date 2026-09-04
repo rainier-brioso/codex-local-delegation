@@ -1,6 +1,6 @@
 ---
 name: local-delegate
-description: Delegate a bounded implementation task to a configured local model provider, then review the resulting diff and evidence. Use when the user explicitly requests local delegation in a Git repository, or for source, test, configuration, or documentation changes in a repository configured to prefer it. Do not use for analysis-only requests or tasks requiring network access, dependency installation, commits, pushes, migrations, or external actions.
+description: Delegate a bounded implementation task in a Git repository to a configured local model provider, then review the resulting diff and evidence. Use when the user asks to delegate implementation to a local model, or explicitly invokes $local-delegate. Do not use for analysis-only requests or tasks requiring network access, dependency installation, commits, pushes, migrations, or external actions.
 ---
 
 # Local Delegate
@@ -15,9 +15,8 @@ assume the plugin source checkout is the current working directory.
 
 ## Preconditions
 
-- Work only in a Git repository. An explicit user invocation of
-  `$local-delegate` authorizes that task without repository setup. Otherwise,
-  require the repository to opt in through the managed `AGENTS.md` policy.
+- Work only in a Git repository. The installed skill is reusable across
+  repositories; never require or create a repository `AGENTS.md` opt-in.
 - Do not invoke this workflow when `LOCAL_DELEGATION_ACTIVE=1`.
 - Require a bounded outcome, explicit acceptance criteria, allowed paths, and
   verification commands.
@@ -30,12 +29,6 @@ assume the plugin source checkout is the current working directory.
   an intentional provider/model change. Run
   `python <plugin-root>/scripts/doctor.py` if compatibility has not been verified
   since the provider, selected model, or Codex CLI changed.
-
-When the user asks to enable, initialize, or set up automatic local delegation
-for a repository, run
-`python <plugin-root>/scripts/setup_repository.py --repository <repository>`.
-This command owns the managed `AGENTS.md` block and local Git exclusion; do not
-ask the user to copy or edit that policy manually.
 
 ## Workflow
 
