@@ -29,6 +29,7 @@ from local_delegation.common import (
     acquire_ld_file_lock,
     release_ld_file_lock,
     inspect_ld_codex_cli,
+    find_ld_codex_cli,
     CODEX_COMPATIBILITY_CONTRACT_VERSION,
 )
 
@@ -361,13 +362,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         initialize_ld_state_root(resolved_state_root)
         configuration = read_ld_provider_config(resolved_state_root)
 
-        codex_executable = args.codex_bin
+        codex_executable = find_ld_codex_cli(args.codex_bin)
         if not codex_executable:
-            codex_executable = os.environ.get("LOCAL_DELEGATE_CODEX_BIN")
-        if not codex_executable:
-            codex_executable = shutil.which("codex")
-        if not codex_executable:
-            raise RuntimeError("Codex CLI was not found.")
+            raise RuntimeError("Codex CLI was not found on PATH or in Codex Desktop.")
         codex_info = inspect_ld_codex_cli(codex_executable)
 
         # Check doctor

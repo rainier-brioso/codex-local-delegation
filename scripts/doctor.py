@@ -19,6 +19,7 @@ from local_delegation.common import (
     http_post,
     convert_from_ld_json_response,
     inspect_ld_codex_cli,
+    find_ld_codex_cli,
     CODEX_COMPATIBILITY_CONTRACT_VERSION,
 )
 
@@ -127,14 +128,10 @@ def test_tool_round_trip(responses_url: str, model: str, timeout_seconds: int) -
 
 
 def find_codex_on_path() -> str:
-    """Find the Codex executable using the runner-compatible override or PATH."""
-    import shutil
-    override = os.environ.get("LOCAL_DELEGATE_CODEX_BIN")
-    codex = override or shutil.which("codex")
-    if codex and not os.path.isfile(codex) and override:
-        raise RuntimeError(f"LOCAL_DELEGATE_CODEX_BIN does not exist: {codex}")
+    """Find the Codex executable using the shared runner-compatible resolver."""
+    codex = find_ld_codex_cli()
     if codex is None:
-        raise RuntimeError("Codex CLI was not found on PATH.")
+        raise RuntimeError("Codex CLI was not found on PATH or in Codex Desktop.")
     return codex
 
 

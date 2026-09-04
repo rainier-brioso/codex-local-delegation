@@ -79,8 +79,14 @@ approval interface; rerun it after updating Codex.
 
 ## Delegate
 
-Install the plugin during development, opt a repository in with the supplied
-`templates/workspace-AGENTS.md`, and invoke `$local-delegate` with a bounded task.
+Install the plugin and invoke `$local-delegate` with a bounded task in any Git
+repository. You can also ask Codex to “delegate this implementation to my local
+model”; the installed skill is available for that workflow without modifying
+the repository or its `AGENTS.md` file.
+
+`$local-delegate` is the deterministic option. Natural-language requests are
+matched to the installed skill when they clearly ask for local delegation.
+
 The skill creates a handoff and calls the runner. The runner edits the current
 worktree, preserves logs outside it, and rejects out-of-scope changes.
 

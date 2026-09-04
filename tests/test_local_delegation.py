@@ -30,6 +30,7 @@ from local_delegation.common import (
     get_ld_state_root,
     get_ld_sha256_text,
     get_ld_codex_approval_mode,
+    find_ld_codex_cli,
     http_get,
     http_post,
     initialize_ld_state_root,
@@ -47,7 +48,6 @@ from run_local_developer import (
     validate_handoff_constraints,
     validate_json_schema_subset,
 )
-
 
 def start_test_process(code):
     options = {}
@@ -84,6 +84,20 @@ class TestStateRoot(unittest.TestCase):
             initialize_ld_state_root(tmpdir)
             for subdir in ("config", "logs", "codex-home", "run", "locks", "tmp"):
                 self.assertTrue(os.path.isdir(os.path.join(tmpdir, subdir)))
+
+
+class TestCodexCliDiscovery(unittest.TestCase):
+    """Tests for deterministic Codex CLI discovery."""
+
+    def test_override_takes_precedence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            executable = Path(tmpdir) / "codex.exe"
+            executable.touch()
+            self.assertTrue(os.path.samefile(find_ld_codex_cli(str(executable)), executable))
+
+    def test_missing_override_is_an_error(self):
+        with self.assertRaisesRegex(RuntimeError, "LOCAL_DELEGATE_CODEX_BIN does not exist"):
+            find_ld_codex_cli("C:/not-a-real-codex.exe")
 
 
 class TestUrlHelpers(unittest.TestCase):
@@ -620,24 +634,28 @@ class TestDocReferences(unittest.TestCase):
     def test_skill_uses_python(self):
         """Skill references Python entry points."""
         skill_path = os.path.join(os.path.dirname(__file__), "..", "skills", "local-delegate", "SKILL.md")
-        with open(skill_path, "r") as f:
+        with open(skill_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("configure_provider.py", content)
         self.assertIn("doctor.py", content)
         self.assertIn("run_local_developer.py", content)
+        self.assertNotIn("setup_repository.py", content)
+        self.assertIn("never require or create a repository `AGENTS.md` opt-in", content)
 
     def test_readme_uses_python(self):
         """README references Python entry points."""
         readme_path = os.path.join(os.path.dirname(__file__), "..", "README.md")
-        with open(readme_path, "r") as f:
+        with open(readme_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("configure_provider.py", content)
         self.assertIn("doctor.py", content)
+        self.assertNotIn("setup_repository.py", content)
+        self.assertIn("without modifying", content)
 
     def test_contributing_uses_python(self):
         """CONTRIBUTING references Python test command."""
         contrib_path = os.path.join(os.path.dirname(__file__), "..", "CONTRIBUTING.md")
-        with open(contrib_path, "r") as f:
+        with open(contrib_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("python -m unittest", content)
 
