@@ -70,6 +70,7 @@ codex-local-delegation/
       SKILL.md
   scripts/
     configure_provider.py
+    setup_repository.py
     run_local_developer.py
     doctor.py
     local_delegation/
@@ -308,9 +309,11 @@ directory. The Desktop-wide `~/.codex/config.toml` remains unchanged. Installing
 copy of the profile into the normal Codex home is a separate, confirmed action
 for manual troubleshooting and is not required by the plugin.
 
-## Per-workspace opt-in
+## Per-workspace preference
 
-An opted-in repository contains only policy and optional settings, not a copy
+Explicit `$local-delegate` invocation is a per-task authorization and requires
+no repository setup. A repository may configure local delegation as its
+automatic preference. It contains only policy and optional settings, not a copy
 of the plugin scripts:
 
 ```text
@@ -321,24 +324,17 @@ repository/
     local-handoffs/           # generated, normally gitignored
 ```
 
-Suggested `AGENTS.md` policy:
+The bundled idempotent setup command adds or updates a marked `AGENTS.md` policy
+without replacing existing repository instructions, and adds the handoff path
+to `.git/info/exclude`:
 
-```md
-# Local developer workflow
-
-Use `$local-delegate` for implementation work that changes source code, tests,
-configuration, or documentation.
-
-When the environment variable `LOCAL_DELEGATION_ACTIVE` is `1`, you are the
-delegated developer. Implement the supplied handoff directly and never invoke
-`$local-delegate` or another delegation workflow.
-
-Act as analyst and reviewer: define scope and acceptance criteria, delegate the
-bounded implementation task, then review the diff and test evidence.
-
-Do not commit, push, or perform external actions unless the user explicitly
-requests them.
+```bash
+python scripts/setup_repository.py --repository <repository>
 ```
+
+The exact managed block is defined by `templates/workspace-AGENTS.md`. Its
+markers let later plugin versions update only that block without treating the
+rest of `AGENTS.md` as plugin-owned content.
 
 Repository-specific `AGENTS.md` files may add canonical test commands,
 architectural constraints, and protected paths. The optional TOML file may set
@@ -368,9 +364,9 @@ Every generated handoff must contain:
 - The analyst reviews all diffs before presenting work as complete.
 - Generated handoffs and output logs are ignored by Git unless a repository
   explicitly chooses to retain them.
-- Setup documents an opt-in `.git/info/exclude` entry for
-  `.codex/local-handoffs/`; the runner warns when artifacts are visible to Git
-  but does not silently modify ignore rules.
+- The explicit repository setup command adds `.codex/local-handoffs/` to
+  `.git/info/exclude`. The runner itself still warns when artifacts are visible
+  to Git and does not silently modify ignore rules.
 - The runner uses an explicit working directory and never executes against a
   parent workspace by accident.
 - Resolved allowed paths must remain beneath the repository root after symlink
@@ -390,8 +386,9 @@ The project is a personal Codex plugin:
 1. Install it once through the personal plugin marketplace.
 2. The `$local-delegate` skill then becomes available in all Codex Desktop and
    Codex CLI sessions on this machine.
-3. Add the small opt-in `AGENTS.md` and optional TOML file to repositories that
-   should use delegation.
+3. Explicitly invoke `$local-delegate` with no repository setup, or run the
+   bundled setup command once in repositories that should prefer delegation
+   automatically. The optional TOML file remains available for timeout overrides.
 4. Run `doctor.py` after configuration and after provider, model, or Codex CLI
    upgrades.
 
