@@ -22,6 +22,37 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 CODEX_COMPATIBILITY_CONTRACT_VERSION = 2
 
+
+def find_ld_codex_cli(override: Optional[str] = None) -> Optional[str]:
+    """Return a usable Codex executable from an override, PATH, or Codex Desktop.
+
+    Codex Desktop keeps its CLI in a versioned directory below LOCALAPPDATA. That
+    directory is not necessarily inherited by terminals launched outside Codex,
+    so PATH alone is not a reliable discovery mechanism on Windows.
+    """
+    configured = override or os.environ.get("LOCAL_DELEGATE_CODEX_BIN")
+    if configured:
+        resolved = shutil.which(configured) or configured
+        if not os.path.isfile(resolved):
+            raise RuntimeError(f"LOCAL_DELEGATE_CODEX_BIN does not exist: {configured}")
+        return os.path.abspath(resolved)
+
+    on_path = shutil.which("codex")
+    if on_path:
+        return os.path.abspath(on_path)
+
+    if os.name != "nt":
+        return None
+
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        return None
+    desktop_bin = Path(local_app_data) / "OpenAI" / "Codex" / "bin"
+    candidates = [path for path in desktop_bin.glob("*/codex.exe") if path.is_file()]
+    if not candidates:
+        return None
+    return str(max(candidates, key=lambda path: path.stat().st_mtime))
+
 # ---------------------------------------------------------------------------
 # State root
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ from local_delegation.common import (
     get_ld_state_root,
     get_ld_sha256_text,
     get_ld_codex_approval_mode,
+    find_ld_codex_cli,
     http_get,
     http_post,
     initialize_ld_state_root,
@@ -83,6 +84,20 @@ class TestStateRoot(unittest.TestCase):
             initialize_ld_state_root(tmpdir)
             for subdir in ("config", "logs", "codex-home", "run", "locks", "tmp"):
                 self.assertTrue(os.path.isdir(os.path.join(tmpdir, subdir)))
+
+
+class TestCodexCliDiscovery(unittest.TestCase):
+    """Tests for deterministic Codex CLI discovery."""
+
+    def test_override_takes_precedence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            executable = Path(tmpdir) / "codex.exe"
+            executable.touch()
+            self.assertEqual(find_ld_codex_cli(str(executable)), str(executable.resolve()))
+
+    def test_missing_override_is_an_error(self):
+        with self.assertRaisesRegex(RuntimeError, "LOCAL_DELEGATE_CODEX_BIN does not exist"):
+            find_ld_codex_cli("C:/not-a-real-codex.exe")
 
 
 class TestUrlHelpers(unittest.TestCase):
